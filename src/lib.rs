@@ -35,6 +35,10 @@ pub struct RenderPlugin {
     /// only as long as the process that copied it holds the clipboard,
     /// unless a clipboard manager takes it over.
     clipboard: Mutex<Option<arboard::Clipboard>>,
+    /// The terminal's answers to the first probe. Later calls reuse them
+    /// and only read the window size, so they never read from the
+    /// terminal, where keys typed meanwhile would be lost.
+    caps: Mutex<Option<term::Caps>>,
 }
 
 impl RenderPlugin {

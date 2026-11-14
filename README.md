@@ -150,7 +150,8 @@ From value to pixels, nothing touches the terminal:
 - `term` probes the terminal: it takes the foreground from Nushell, then sends
   queries to `/dev/tty` in raw mode: the kitty graphics query, `CSI 16t`,
   `CSI 14t`, OSC 11, a three-byte image in a temporary file, and DA1. Any
-  failure falls back to `table`.
+  failure falls back to `table`. The plugin keeps the answers, so later
+  calls only read the window's size and never read from the terminal.
 - `kitty` writes each band with `C=1`, after newlines make room, so the
   screen scrolls before the image goes up. When the terminal read the
   temporary file in the probe, which means it runs on this machine, a band
@@ -274,8 +275,11 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   if there is none).
 - **Too wide:** a table whose number columns alone are wider than the screen
   still overflows it.
-- **Type-ahead:** the probe reads `/dev/tty` in raw mode and throws away
-  whatever isn't an answer, so keys typed while `render` runs are lost.
+- **Type-ahead:** the first `render` in a session reads `/dev/tty` in raw
+  mode and throws away whatever isn't an answer, so keys typed during it
+  are lost. Later calls reuse its answers, so they lose nothing. After
+  changing the terminal's font size, `plugin stop render` makes it probe
+  again.
 - **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
   so only the parser is tested.
 - **Not wired up:** plugin config, such as a font family.

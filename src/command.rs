@@ -184,7 +184,17 @@ impl PluginCommand for Render {
         let caps = if as_png || copy {
             None
         } else {
-            match term::probe(engine) {
+            let known = plugin.caps.lock().ok().and_then(|caps| caps.clone());
+            if known.is_some() {
+                debug("reusing the terminal's answers from the first probe");
+            }
+            let probed = term::probe(engine, known.as_ref());
+            if let (None, Ok(caps)) = (&known, &probed)
+                && let Ok(mut slot) = plugin.caps.lock()
+            {
+                *slot = Some(caps.clone());
+            }
+            match probed {
                 // Sixel needs the cell's size in pixels, to know how big to
                 // draw; kitty graphics fit the image to cells either way.
                 Ok(caps) if caps.kitty || (caps.sixel && caps.cell.is_some()) => Some(caps),

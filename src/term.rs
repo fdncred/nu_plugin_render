@@ -8,7 +8,7 @@
 use nu_plugin::EngineInterface;
 
 /// What the terminal answered.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Caps {
     /// It took a kitty graphics query.
     pub kitty: bool,
@@ -26,15 +26,16 @@ pub struct Caps {
     pub background: Option<[u8; 3]>,
 }
 
-/// Probe the terminal nushell runs in.
+/// Probe the terminal nushell runs in. With `known` answers from an earlier
+/// probe, only the window size is read; nothing is read from the terminal.
 ///
 /// # Errors
 ///
 /// Fails when there is no terminal, the plugin can't take the foreground,
 /// or the terminal doesn't answer in time.
 #[cfg(unix)]
-pub fn probe(engine: &EngineInterface) -> Result<Caps, String> {
-    unix::probe(engine)
+pub fn probe(engine: &EngineInterface, known: Option<&Caps>) -> Result<Caps, String> {
+    unix::probe(engine, known)
 }
 
 /// Terminal probing isn't written for this platform yet.
@@ -43,7 +44,7 @@ pub fn probe(engine: &EngineInterface) -> Result<Caps, String> {
 ///
 /// Always.
 #[cfg(not(unix))]
-pub fn probe(_engine: &EngineInterface) -> Result<Caps, String> {
+pub fn probe(_engine: &EngineInterface, _known: Option<&Caps>) -> Result<Caps, String> {
     Err("terminal probing isn't supported on this platform yet".into())
 }
 
@@ -75,7 +76,7 @@ mod unix {
     /// Device attributes, the last query.
     const DEVICE_ATTRIBUTES: &[u8] = b"\x1b[c";
 
-    pub fn probe(engine: &EngineInterface) -> Result<Caps, String> {
+    pub fn probe(engine: &EngineInterface, known: Option<&Caps>) -> Result<Caps, String> {
         // In local-socket mode the plugin's stdin is nushell's. When that
         // isn't a terminal, nushell can't hand the terminal over either.
         if !engine.is_using_stdio() && !std::io::stdin().is_terminal() {
@@ -86,6 +87,14 @@ mod unix {
             .write(true)
             .open("/dev/tty")
             .map_err(|err| format!("no terminal: {err}"))?;
+        if let Some(known) = known {
+            let size = window_size(&tty)?;
+            return Ok(Caps {
+                columns: u32::from(size.ws_col),
+                rows: u32::from(size.ws_row),
+                ..known.clone()
+            });
+        }
         let _foreground = engine
             .enter_foreground()
             .map_err(|err| format!("couldn't take the terminal's foreground: {err}"))?;
@@ -97,12 +106,7 @@ mod unix {
             return Err("the plugin isn't in the terminal's foreground".into());
         }
 
-        // SAFETY: `winsize` is plain data that TIOCGWINSZ fills in.
-        let size = unsafe {
-            let mut size: libc::winsize = std::mem::zeroed();
-            (libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) == 0).then_some(size)
-        }
-        .ok_or("couldn't read the window size")?;
+        let size = window_size(&tty)?;
 
         // A three-byte image in a temporary file: a terminal on this
         // machine reads it and deletes it.
@@ -142,6 +146,17 @@ mod unix {
             return Err("the terminal didn't answer".into());
         }
         Ok(caps)
+    }
+
+    /// The window's size, in cells and, when the terminal says, pixels.
+    fn window_size(tty: &File) -> Result<libc::winsize, String> {
+        // SAFETY: `winsize` is plain data that TIOCGWINSZ fills in, on a
+        // descriptor the caller holds open.
+        unsafe {
+            let mut size: libc::winsize = std::mem::zeroed();
+            (libc::ioctl(tty.as_raw_fd(), libc::TIOCGWINSZ, &mut size) == 0).then_some(size)
+        }
+        .ok_or_else(|| "couldn't read the window size".to_string())
     }
 
     /// The terminal in raw mode until dropped.
