@@ -25,12 +25,10 @@ use crate::term;
 /// Nested lists and records deeper than this show as a summary.
 const MAX_DEPTH: usize = 4;
 
-/// Cell rows per image band. Short bands guard against a terminal that
-/// stops drawing an image once its top scrolls off the screen, which would
-/// leave a tall blank. But every image costs the terminal time: in Rex,
-/// `$env` at 143 columns took 141 ms to show in 22-row bands, 240 ms in
-/// 4-row bands, and 318 ms in 1-row bands.
-const BAND_ROWS: u32 = 4;
+/// Cell rows per image band. Every image costs the terminal time, so fewer,
+/// taller bands show sooner: in Rex, `$env` at 143 columns took 141 ms to
+/// show in 22-row bands, 240 ms in 4-row bands, and 318 ms in 1-row bands.
+const BAND_ROWS: u32 = 40;
 
 pub struct Render;
 
