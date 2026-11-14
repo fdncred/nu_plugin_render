@@ -670,6 +670,7 @@ impl Layout<'_, '_> {
         }
 
         let mut shrunk = vec![false; count];
+        let mut numbers_give = false;
         loop {
             let total: f32 = widths.iter().sum();
             if total <= available {
@@ -679,7 +680,18 @@ impl Layout<'_, '_> {
                 .filter(|&column| widths[column] > floors[column])
                 .max_by(|&a, &b| widths[a].total_cmp(&widths[b]));
             let Some(column) = widest else {
-                break;
+                // Only number columns are left, and they alone are wider
+                // than the screen: as a last resort, they shrink too.
+                if numbers_give {
+                    break;
+                }
+                numbers_give = true;
+                for (floor, align) in floors.iter_mut().zip(align) {
+                    if *align != Align::Left {
+                        *floor = floor.min(min_text);
+                    }
+                }
+                continue;
             };
             widths[column] = (widths[column] - (total - available))
                 .max(floors[column])

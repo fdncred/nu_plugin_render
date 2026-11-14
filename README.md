@@ -85,7 +85,7 @@ on stderr, why `render` fell back to `table`, or how long each phase took.
   - The widest text columns get narrower. Their text wraps, between words
     when `wrapping_try_keep_words` is on, or with `trim.methodology:
     truncating`, is cut short and ends in `truncating_suffix`. Number
-    columns never shrink.
+    columns shrink only when they alone are wider than the screen.
   - Each column's nested tables get the room the other columns leave.
   - A nested table shows its summary, such as `{record 39 fields}`, when it
     would get less room than about two dozen characters, or when fitting it
@@ -273,8 +273,6 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
 - **Leftover files:** output captured and never displayed leaves its
   temporary files until the next `render` call (or the system's own cleanup
   if there is none).
-- **Too wide:** a table whose number columns alone are wider than the screen
-  still overflows it.
 - **Type-ahead:** the first `render` in a session reads `/dev/tty` in raw
   mode and throws away whatever isn't an answer, so keys typed during it
   are lost. Later calls reuse its answers, so they lose nothing. After
