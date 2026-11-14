@@ -86,6 +86,11 @@ impl PluginCommand for Render {
                 Some('d'),
             )
             .switch("flatten", "Flatten simple arrays, with --expand.", None)
+            .switch(
+                "collapse",
+                "Expand the table structure in collapse mode: nested tables merge into their cells.",
+                Some('c'),
+            )
             .named(
                 "flatten-separator",
                 SyntaxShape::String,
@@ -159,7 +164,12 @@ impl PluginCommand for Render {
             ),
             None => None,
         };
-        let index = index_flag(call)?;
+        let collapse = call.has_flag("collapse")?;
+        // As in `table`, a collapsed table shows its index only when asked.
+        let index_explicit = call
+            .get_flag_value("index")
+            .is_some_and(|value| !matches!(value, Value::Nothing { .. }));
+        let index = index_flag(call)?.filter(|_| !collapse || index_explicit);
         let expand = call.has_flag("expand")?;
         let expand_deep: Option<usize> = call.get_flag("expand-deep")?;
         let flatten = call.has_flag("flatten")?;
@@ -244,14 +254,18 @@ impl PluginCommand for Render {
                     config: &config,
                     theme: &theme,
                     styles: &mut styles,
-                    max_depth: match (expand, expand_deep) {
-                        (false, _) => 0,
-                        (true, deep) => deep.unwrap_or(usize::MAX),
+                    max_depth: if collapse {
+                        usize::MAX
+                    } else if expand {
+                        expand_deep.unwrap_or(usize::MAX)
+                    } else {
+                        0
                     },
                     flatten: (expand && flatten)
                         .then(|| flatten_separator.as_deref().unwrap_or(" ")),
                     index,
                     icons,
+                    collapse,
                 }
                 .grid(abbreviated.as_ref().unwrap_or(&value), 0);
                 if let Some(kind) = empty {
@@ -275,10 +289,15 @@ impl PluginCommand for Render {
                 let faces = if mono { fonts.mono } else { fonts.sans };
                 let settings = Settings {
                     trim,
-                    border,
+                    // Collapsed tables draw lines between all their rows.
+                    border: border.map(|border| Border {
+                        rows: border.rows || collapse,
+                        ..border
+                    }),
                     line_color: theme.foreground(&styles.named("separator"), theme.muted),
                     padding: (config.table.padding.left, config.table.padding.right),
                     header_on_separator: config.table.header_on_separator,
+                    collapse,
                 };
                 let rows = grid.rows.len();
                 within_budget(budget, rows, |keep| {
@@ -549,6 +568,7 @@ const TABLE_FLAGS: &[&str] = &[
     "abbreviated",
     "icons",
     "theme",
+    "collapse",
 ];
 
 /// Hand the value to `table`, with the flags they share, for terminals that

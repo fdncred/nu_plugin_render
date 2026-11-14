@@ -44,6 +44,7 @@ These work as they do in `table`:
 | `--expand-deep`, `-d` | How many levels `--expand` nests; deeper ones show their summary. |
 | `--flatten` | With `--expand`, a list of plain values in a table's row shows as one line. A record's values don't flatten. |
 | `--flatten-separator` | What `--flatten` joins with. Defaults to a space. |
+| `--collapse`, `-c` | Nested tables merge into their cells: each fills its cell and shares its lines, with lines between all rows. Every level nests, and the index shows only with `--index`. On the card, the merged cells get quiet lines. |
 | `--index`, `-i` | `false` hides the `#` column, `true` shows it, and a number starts it there. Nested tables count from 0. |
 | `--abbreviated`, `-a` | Only this many rows at the top and bottom, with a `...` row between. Defaults to `$env.config.table.abbreviated_row_count`. |
 | `--icons`, `-o` | A file icon before each path that `LS_COLORS` styles, from devicons, as `table --icons` draws it. |
@@ -263,5 +264,4 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   whatever isn't an answer, so keys typed while `render` runs are lost.
 - **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
   so only the parser is tested.
-- **Not wired up:** `table`'s `--collapse`, and plugin config such as a
-  font family.
+- **Not wired up:** plugin config, such as a font family.

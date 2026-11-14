@@ -74,7 +74,10 @@ pub fn lay_out(
     // A padding character is the card look's spacing, about 0.6 em.
     geometry.pad_left = (settings.padding.0 as f32 * px * 0.6).round();
     geometry.pad_right = (settings.padding.1 as f32 * px * 0.6).round();
-    if settings.border.is_some() {
+    if settings.collapse {
+        // Collapsed tables fill their cells.
+        geometry.inset = 0.0;
+    } else if settings.border.is_some() {
         // A nested table's frame needs room from the lines around it.
         geometry.inset = geometry.pad_y;
     }

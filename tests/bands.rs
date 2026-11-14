@@ -135,7 +135,8 @@ fn bands_join_into_the_whole_table() {
 }
 
 /// Themes' lines cross band edges: frames, row lines, rounded corners,
-/// dots, hearts, and a header on its line.
+/// dots, hearts, a header on its line, and collapsed tables filling their
+/// cells.
 #[test]
 fn bands_join_into_the_whole_table_with_lines() {
     let fonts = Fonts::load().expect("system fonts");
@@ -145,16 +146,19 @@ fn bands_join_into_the_whole_table_with_lines() {
         columns: 100,
         rows: 30,
     };
-    for (name, header_on_separator) in [
-        ("rounded", true),
-        ("thin", false),
-        ("dots", false),
-        ("with_love", true),
-        ("reinforced", false),
+    for (name, header_on_separator, collapse) in [
+        ("rounded", true, false),
+        ("thin", false, false),
+        ("dots", false, false),
+        ("with_love", true, false),
+        ("reinforced", false, false),
+        ("rounded", true, true),
+        ("card", false, true),
     ] {
         let settings = Settings {
             border: Border::for_theme(name).expect("a theme"),
             header_on_separator,
+            collapse,
             ..Settings::card(theme.muted)
         };
         let drawing = draw::lay_out(

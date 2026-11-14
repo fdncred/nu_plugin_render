@@ -33,6 +33,9 @@ pub struct Settings {
     /// `$env.config.table.header_on_separator`: with lines, the header sits
     /// on the top line instead of in a row of its own.
     pub header_on_separator: bool,
+    /// `--collapse`: nested tables fill their cells and share their lines,
+    /// as `table --collapse` draws them.
+    pub collapse: bool,
 }
 
 impl Settings {
@@ -44,6 +47,7 @@ impl Settings {
             line_color,
             padding: (1, 1),
             header_on_separator: false,
+            collapse: false,
         }
     }
 }
@@ -124,6 +128,14 @@ pub struct Block {
     /// The header sits on the top line, `header_height` tall with the line
     /// through its middle.
     pub header_on_line: bool,
+    /// With `--collapse`, a nested table that fills its cell, padding and
+    /// all, and draws no frame of its own.
+    pub flush: bool,
+    /// How much wider than its column's content a flush table is: the
+    /// column's padding, which it fills.
+    pub overhang: f32,
+    /// Each column's alignment, the index first.
+    pub align: Vec<Align>,
     /// Fitting cut a column other than the last short, such as a record's
     /// keys. A nested table like that shows its summary instead.
     pub cramped: bool,
@@ -185,7 +197,9 @@ struct Measured<'g> {
 impl Measured<'_> {
     fn width(&self) -> f32 {
         let text = self.lines.iter().map(|line| line.width).fold(0.0, f32::max);
-        self.grid.as_ref().map_or(text, |grid| text.max(grid.width))
+        self.grid
+            .as_ref()
+            .map_or(text, |grid| text.max(grid.width - grid.overhang))
     }
 
     fn blank() -> Self {
@@ -220,6 +234,12 @@ impl Layout<'_, '_> {
     /// ellipsis, and nested tables too wide for their column show their
     /// summary instead, as `table --expand` does.
     pub fn block(&mut self, grid: &Grid, max_width: f32) -> Block {
+        self.lay_out_block(grid, max_width, false)
+    }
+
+    /// Lay out `grid`; a `flush` one is a nested table that will fill its
+    /// cell with `--collapse`.
+    fn lay_out_block(&mut self, grid: &Grid, max_width: f32, flush: bool) -> Block {
         let has_index = grid.index.is_some();
         let mut align: Vec<Align> = Vec::with_capacity(grid.align.len() + 1);
         if has_index {
@@ -271,7 +291,7 @@ impl Layout<'_, '_> {
             let Some((row, column, _)) = widest else {
                 break fit;
             };
-            self.collapse(&mut cells[row][column]);
+            self.summarize(&mut cells[row][column]);
         };
         let Fit {
             widths,
@@ -337,6 +357,7 @@ impl Layout<'_, '_> {
 
         let border = self.settings.border;
         let header_on_line = self.settings.header_on_separator
+            && !flush
             && !header.is_empty()
             && border.is_some_and(|border| border.takes_header());
         let header_height = if header.is_empty() {
@@ -362,7 +383,7 @@ impl Layout<'_, '_> {
             .collect();
 
         let mut rows = Vec::with_capacity(cells.len());
-        let mut placed_cells = Vec::with_capacity(cells.len());
+        let mut placed_cells: Vec<Vec<Placed>> = Vec::with_capacity(cells.len());
         let mut y = header_height;
         for mut row in cells {
             // Text in a column fitting cut short wraps instead, when the
@@ -421,6 +442,15 @@ impl Layout<'_, '_> {
         if footer {
             y += header_height;
         }
+        // Collapsed tables fill their cells now that the cells' sizes are
+        // known.
+        for (row, cells) in rows.iter().zip(&mut placed_cells) {
+            for (column, cell) in cells.iter_mut().enumerate() {
+                if let Some(nested) = cell.grid.as_mut().filter(|nested| nested.flush) {
+                    stretch(nested, widths[column] + gutter, row.height);
+                }
+            }
+        }
         Block {
             width: x,
             height: y,
@@ -434,6 +464,9 @@ impl Layout<'_, '_> {
             border,
             line_color: self.settings.line_color,
             header_on_line,
+            flush,
+            overhang: if flush { gutter } else { 0.0 },
+            align,
             cramped,
         }
     }
@@ -546,14 +579,18 @@ impl Layout<'_, '_> {
                     // With less room than this, a nested table is mostly
                     // ellipses, so its summary says more.
                     if budget < self.geometry.px * MIN_NESTED_EMS {
-                        self.collapse(cell);
+                        self.summarize(cell);
                         continue;
                     }
-                    let block = self.block(nested, budget);
-                    if block.width <= budget && !block.cramped {
+                    // A collapsed table fills its cell's padding too.
+                    let collapse = self.settings.collapse;
+                    let gutter = self.geometry.pad_left + self.geometry.pad_right;
+                    let room = if collapse { budget + gutter } else { budget };
+                    let block = self.lay_out_block(nested, room, collapse);
+                    if block.width - block.overhang <= budget && !block.cramped {
                         cell.grid = Some(Box::new(block));
                     } else {
-                        self.collapse(cell);
+                        self.summarize(cell);
                     }
                 }
             }
@@ -561,7 +598,7 @@ impl Layout<'_, '_> {
     }
 
     /// Show a nested table's summary in its place.
-    fn collapse(&mut self, cell: &mut Measured<'_>) {
+    fn summarize(&mut self, cell: &mut Measured<'_>) {
         cell.grid = None;
         cell.nested = None;
         if let Some(summary) = cell.summary {
@@ -592,7 +629,7 @@ impl Layout<'_, '_> {
         for row in cells {
             for (column, cell) in row.iter().enumerate() {
                 if let Some(grid) = &cell.grid {
-                    floors[column] = floors[column].max(grid.width.ceil());
+                    floors[column] = floors[column].max((grid.width - grid.overhang).ceil());
                 }
                 if align[column] == Align::Decimal {
                     for &integer in &cell.integer_widths {
@@ -737,6 +774,51 @@ impl Layout<'_, '_> {
                 color: cell.color,
                 ..Measured::blank()
             },
+        }
+    }
+}
+
+/// Grow a collapsed table to `width` × `height`: its last column takes the
+/// extra width and its last row the extra height, and the tables inside
+/// grow to fill their cells again.
+fn stretch(block: &mut Block, width: f32, height: f32) {
+    let extra = width - block.width;
+    if extra > 0.0 {
+        block.width = width;
+        let last = block.columns.len().saturating_sub(1);
+        if let Some(column) = block.columns.last_mut() {
+            column.width += extra;
+        }
+        // Text aligned right stays at the column's right edge.
+        if block
+            .align
+            .get(last)
+            .is_some_and(|align| *align != Align::Left)
+        {
+            let cells = block.cells.iter_mut().filter_map(|row| row.get_mut(last));
+            for cell in cells.chain(block.header.get_mut(last)) {
+                for (dx, _) in &mut cell.lines {
+                    *dx += extra;
+                }
+            }
+        }
+    }
+    let extra = height - block.height;
+    if extra > 0.0 {
+        block.height = height;
+        // A footer stays at the bottom: the last row above it grows.
+        if let Some(row) = block.rows.last_mut() {
+            row.height += extra;
+        }
+    }
+    let gutter = block.overhang;
+    let widths: Vec<f32> = block.columns.iter().map(|column| column.width).collect();
+    let heights: Vec<f32> = block.rows.iter().map(|row| row.height).collect();
+    for (cells, &row_height) in block.cells.iter_mut().zip(&heights) {
+        for (cell, &column_width) in cells.iter_mut().zip(&widths) {
+            if let Some(nested) = cell.grid.as_mut().filter(|nested| nested.flush) {
+                stretch(nested, column_width + gutter, row_height);
+            }
         }
     }
 }

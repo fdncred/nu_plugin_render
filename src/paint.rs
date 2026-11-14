@@ -373,9 +373,32 @@ impl Painter<'_, '_> {
         if !canvas.touches(y, block.height) {
             return;
         }
-        match block.border {
-            Some(border) => self.lines(canvas, block, &border, x, y),
-            None => self.card(canvas, block, x, y, nested),
+        match (block.border, block.flush) {
+            // A collapsed table's frame is its cell's lines, so it draws
+            // only the lines inside, between all its rows.
+            (Some(border), true) => {
+                let inside = Border {
+                    top: false,
+                    bottom: false,
+                    left: false,
+                    right: false,
+                    rows: true,
+                    ..border
+                };
+                self.lines(canvas, block, &inside, block.line_color, x, y);
+            }
+            (Some(border), false) => self.lines(canvas, block, &border, block.line_color, x, y),
+            // On a card, a collapsed table shows its cells with quiet lines.
+            (None, true) => {
+                let inside = Border {
+                    columns: true,
+                    header: true,
+                    rows: true,
+                    ..Border::for_mode(nu_protocol::TableMode::None)
+                };
+                self.lines(canvas, block, &inside, self.theme.rule, x, y);
+            }
+            (None, false) => self.card(canvas, block, x, y, nested),
         }
         // A header on its line has no padding of its own.
         let text_dy = if block.header_on_line {
@@ -509,7 +532,15 @@ impl Painter<'_, '_> {
     }
 
     /// A theme's lines, as `table --theme` draws them in characters.
-    fn lines(&mut self, canvas: &mut Canvas, block: &Block, border: &Border, x: f32, y: f32) {
+    fn lines(
+        &mut self,
+        canvas: &mut Canvas,
+        block: &Block,
+        border: &Border,
+        line_color: Rgba,
+        x: f32,
+        y: f32,
+    ) {
         let lw = self.line_width();
         let weight = match border.stroke {
             Stroke::Heavy => 2.0 * lw,
@@ -518,8 +549,8 @@ impl Painter<'_, '_> {
             Stroke::Thin | Stroke::Dotted => lw,
         };
         let color = match border.stroke {
-            Stroke::Hearts => self.theme.color(Color::Red, block.line_color),
-            _ => block.line_color,
+            Stroke::Hearts => self.theme.color(Color::Red, line_color),
+            _ => line_color,
         };
         let pen = Pen {
             stroke: border.stroke,
@@ -721,8 +752,14 @@ impl Painter<'_, '_> {
             }
         }
         if let Some(grid) = &cell.grid {
-            let top = y - self.geometry.pad_y + self.geometry.inset;
-            self.block(canvas, grid, x, top, true);
+            if grid.flush {
+                // A collapsed table fills its cell, padding and all.
+                let left = x - self.geometry.pad_left;
+                self.block(canvas, grid, left, y - self.geometry.pad_y, true);
+            } else {
+                let top = y - self.geometry.pad_y + self.geometry.inset;
+                self.block(canvas, grid, x, top, true);
+            }
         }
     }
 }

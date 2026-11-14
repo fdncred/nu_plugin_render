@@ -134,6 +134,9 @@ pub struct Builder<'a> {
     pub index: Option<usize>,
     /// `--icons`: a file icon before each path that `LS_COLORS` styles.
     pub icons: bool,
+    /// `--collapse`: nested tables merge into their cells, so they get no
+    /// index column of their own.
+    pub collapse: bool,
 }
 
 /// Counts of a column's value kinds, to pick its alignment.
@@ -237,6 +240,7 @@ impl Builder<'_> {
         }
 
         let show_index = self.index.is_some()
+            && (depth == 0 || !self.collapse)
             && match self.config.table.index_mode {
                 TableIndexMode::Always => true,
                 TableIndexMode::Never => false,
@@ -488,6 +492,7 @@ mod tests {
             flatten,
             index,
             icons: false,
+            collapse: false,
         }
         .grid(value, 0)
     }
@@ -534,6 +539,28 @@ mod tests {
         });
         let grid = build(&record, usize::MAX, Some(", "), Some(0));
         assert!(matches!(grid.rows[0][1].content, Content::Grid { .. }));
+    }
+
+    #[test]
+    fn collapsed_nested_lists_have_no_index() {
+        let nested = Value::test_list(vec![rows()]);
+        let config = Config::default();
+        let theme = Theme::dark();
+        let grid = Builder {
+            config: &config,
+            theme: &theme,
+            styles: &mut Plain,
+            max_depth: usize::MAX,
+            flatten: None,
+            index: Some(0),
+            icons: false,
+            collapse: true,
+        }
+        .grid(&nested, 0);
+        let Content::Grid { grid: inner, .. } = &grid.rows[0][0].content else {
+            panic!("expected a nested table");
+        };
+        assert!(grid.index.is_some() && inner.index.is_none());
     }
 
     #[test]
