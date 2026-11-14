@@ -70,18 +70,23 @@ fn is_private_use(c: char) -> bool {
     )
 }
 
-/// Installed Nerd Font faces, symbols-only and Mono variants first.
+/// Installed Nerd Font faces, symbols-only first and Mono variants last.
 fn nerd_fonts(db: &Database) -> Vec<ID> {
+    // The Mono variants shrink each icon to one character's width, which
+    // reads small next to text; the others draw icons at the font's size,
+    // about as terminals show them.
     let rank = |family: &str| {
         if !(family.contains("Nerd Font") || family.ends_with(" NF") || family.ends_with(" NFM")) {
-            None
-        } else if family.starts_with("Symbols Nerd Font") {
-            Some(0)
-        } else if family.contains("Mono") {
-            Some(1)
-        } else {
-            Some(2)
+            return None;
         }
+        let mono = family.contains("Mono") || family.ends_with(" NFM");
+        let symbols = family.starts_with("Symbols Nerd Font");
+        Some(match (symbols, mono) {
+            (true, false) => 0,
+            (false, false) => 1,
+            (true, true) => 2,
+            (false, true) => 3,
+        })
     };
     let mut found: Vec<(u8, ID)> = db
         .faces()
