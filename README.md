@@ -302,3 +302,7 @@ On macOS:
   terminal with a light background. Rex doesn't answer OSC 11, so it always
   gets the dark theme.
 - **Not wired up:** plugin config, such as a font family.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
