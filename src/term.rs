@@ -238,9 +238,11 @@ mod unix {
             if left.is_zero() {
                 break;
             }
+            // `as _` takes the fields' own types: libc deprecates naming
+            // them on musl, where they are changing size.
             let mut wait = libc::timeval {
-                tv_sec: left.as_secs() as libc::time_t,
-                tv_usec: left.subsec_micros() as libc::suseconds_t,
+                tv_sec: left.as_secs() as _,
+                tv_usec: left.subsec_micros() as _,
             };
             // SAFETY: `fd_set` is plain data set up by FD_ZERO and FD_SET
             // for one open descriptor below FD_SETSIZE.
