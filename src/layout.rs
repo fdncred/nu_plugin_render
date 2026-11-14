@@ -36,6 +36,9 @@ pub struct Settings {
     /// `--collapse`: nested tables fill their cells and share their lines,
     /// as `table --collapse` draws them.
     pub collapse: bool,
+    /// Put the card's color behind a table drawn in lines, for an image
+    /// that leaves the terminal, where there's no background to sit on.
+    pub backdrop: bool,
 }
 
 impl Settings {
@@ -48,6 +51,7 @@ impl Settings {
             padding: (1, 1),
             header_on_separator: false,
             collapse: false,
+            backdrop: false,
         }
     }
 }
@@ -136,6 +140,8 @@ pub struct Block {
     pub overhang: f32,
     /// Each column's alignment, the index first.
     pub align: Vec<Align>,
+    /// The card's color behind the lines; see [`Settings::backdrop`].
+    pub backdrop: bool,
     /// Fitting cut a column other than the last short, such as a record's
     /// keys. A nested table like that shows its summary instead.
     pub cramped: bool,
@@ -467,6 +473,7 @@ impl Layout<'_, '_> {
             flush,
             overhang: if flush { gutter } else { 0.0 },
             align,
+            backdrop: self.settings.backdrop,
             cramped,
         }
     }

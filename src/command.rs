@@ -305,6 +305,8 @@ impl PluginCommand for Render {
                     padding: (config.table.padding.left, config.table.padding.right),
                     header_on_separator: config.table.header_on_separator,
                     collapse,
+                    // An image that leaves the terminal has nothing behind it.
+                    backdrop: as_png || copy,
                 };
                 let rows = grid.rows.len();
                 within_budget(budget, rows, |keep| {

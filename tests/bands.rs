@@ -148,19 +148,21 @@ fn bands_join_into_the_whole_table_with_lines() {
         columns: 100,
         rows: 30,
     };
-    for (name, header_on_separator, collapse) in [
-        ("rounded", true, false),
-        ("thin", false, false),
-        ("dots", false, false),
-        ("with_love", true, false),
-        ("reinforced", false, false),
-        ("rounded", true, true),
-        ("card", false, true),
+    for (name, header_on_separator, collapse, backdrop) in [
+        ("rounded", true, false, false),
+        ("rounded", true, false, true),
+        ("thin", false, false, false),
+        ("dots", false, false, false),
+        ("with_love", true, false, false),
+        ("reinforced", false, false, false),
+        ("rounded", true, true, false),
+        ("card", false, true, false),
     ] {
         let settings = Settings {
             border: Border::for_theme(name).expect("a theme"),
             header_on_separator,
             collapse,
+            backdrop,
             ..Settings::card(theme.muted)
         };
         let drawing = draw::lay_out(

@@ -387,7 +387,23 @@ impl Painter<'_, '_> {
                 };
                 self.lines(canvas, block, &inside, block.line_color, x, y);
             }
-            (Some(border), false) => self.lines(canvas, block, &border, block.line_color, x, y),
+            (Some(border), false) => {
+                if block.backdrop && !nested {
+                    let radius = if border.corner == Corner::Round {
+                        self.geometry.radius
+                    } else {
+                        0.0
+                    };
+                    let card = Rect {
+                        x,
+                        y,
+                        w: block.width,
+                        h: block.height,
+                    };
+                    canvas.round_rect(card, radius, Corners::ALL, self.theme.card);
+                }
+                self.lines(canvas, block, &border, block.line_color, x, y);
+            }
             // On a card, a collapsed table shows its cells with quiet lines.
             (None, true) => {
                 let inside = Border {
@@ -706,12 +722,19 @@ impl Painter<'_, '_> {
                     .map(|(dx, line)| dx + line.width)
                     .fold(0.0, f32::max);
                 if width > 0.0 {
-                    canvas.clear(Rect {
+                    let gap = Rect {
                         x: x + column.x - pad,
                         y: top - weight,
                         w: width + 2.0 * pad,
                         h: 2.0 * weight,
-                    });
+                    };
+                    // Over a card, the gap shows the card; otherwise the
+                    // terminal's background.
+                    if block.backdrop {
+                        canvas.round_rect(gap, 0.0, Corners::NONE, self.theme.card);
+                    } else {
+                        canvas.clear(gap);
+                    }
                 }
             }
         }

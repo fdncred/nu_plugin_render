@@ -102,8 +102,9 @@ on stderr, why `render` fell back to `table`, or how long each phase took.
   - thin, heavy, double or dotted strokes, and hearts for `with_love`
   - the gaps between `restructured`'s columns
 
-  There is no card behind the lines, so the text sits on the terminal's own
-  background. The lines take `color_config.separator`, or a muted text color
+  In the terminal there is no card behind the lines, so the text sits on
+  the terminal's own background. `--png` and `--copy` put the card's color
+  behind them, since an image elsewhere has no background to sit on. The lines take `color_config.separator`, or a muted text color
   without one. `padding` sets the space beside each column, one character
   being the card's spacing. With `header_on_separator`, the header sits in a
   gap on the top line, except in `markdown` and `restructured`.
