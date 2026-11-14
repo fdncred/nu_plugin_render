@@ -38,12 +38,23 @@ pub fn probe(engine: &EngineInterface, known: Option<&Caps>) -> Result<Caps, Str
     unix::probe(engine, known)
 }
 
+/// Probe the console nushell runs in, as on Unix but through the console
+/// API: Windows Terminal answers the same queries.
+///
+/// # Errors
+///
+/// Fails when there is no console or the terminal doesn't answer in time.
+#[cfg(windows)]
+pub fn probe(engine: &EngineInterface, known: Option<&Caps>) -> Result<Caps, String> {
+    windows::probe(engine, known)
+}
+
 /// Terminal probing isn't written for this platform yet.
 ///
 /// # Errors
 ///
 /// Always.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn probe(_engine: &EngineInterface, _known: Option<&Caps>) -> Result<Caps, String> {
     Err("terminal probing isn't supported on this platform yet".into())
 }
@@ -268,7 +279,174 @@ mod unix {
 }
 
 /// The capabilities in the terminal's answers.
-#[cfg(any(unix, test))]
+#[cfg(windows)]
+mod windows {
+    use std::fs::{File, OpenOptions};
+    use std::io::{IsTerminal as _, Write as _};
+    use std::os::windows::io::AsRawHandle as _;
+    use std::time::{Duration, Instant};
+
+    use nu_plugin::EngineInterface;
+    use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Console::{
+        CONSOLE_MODE, CONSOLE_SCREEN_BUFFER_INFO, ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode,
+        GetConsoleScreenBufferInfo, INPUT_RECORD, KEY_EVENT, ReadConsoleInputW, SetConsoleMode,
+    };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    use super::{Caps, parse};
+
+    /// How long to wait for answers, as on Unix.
+    const TIMEOUT: Duration = Duration::from_millis(1000);
+
+    /// Kitty graphics query (WezTerm has them), cell size, text area size,
+    /// background color, and device attributes, which every terminal
+    /// answers. There is no temporary-file query: Windows terminals don't
+    /// read images from files.
+    const QUERY: &[u8] =
+        b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[16t\x1b[14t\x1b]11;?\x1b\\\x1b[c";
+
+    pub fn probe(_engine: &EngineInterface, known: Option<&Caps>) -> Result<Caps, String> {
+        if !std::io::stdin().is_terminal() {
+            return Err("stdin is not a console".into());
+        }
+        let input = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("CONIN$")
+            .map_err(|err| format!("no console input: {err}"))?;
+        let mut output = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("CONOUT$")
+            .map_err(|err| format!("no console output: {err}"))?;
+        let (columns, rows) = window_size(&output)?;
+        if let Some(known) = known {
+            return Ok(Caps {
+                columns,
+                rows,
+                ..known.clone()
+            });
+        }
+        let replies = {
+            let _vt = VtInput::enter(&input)?;
+            output
+                .write_all(QUERY)
+                .and_then(|()| output.flush())
+                .map_err(|err| format!("writing to the console: {err}"))?;
+            read_replies(&input)?
+        };
+        if super::device_attributes(&replies).is_none() {
+            return Err("the terminal didn't answer".into());
+        }
+        let mut caps = parse(&replies);
+        caps.temp_files = false;
+        caps.columns = columns;
+        caps.rows = rows;
+        Ok(caps)
+    }
+
+    /// The visible window, in cells.
+    fn window_size(output: &File) -> Result<(u32, u32), String> {
+        let mut info: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is plain data the call fills in, and the handle is
+        // the caller's open console output.
+        let ok = unsafe { GetConsoleScreenBufferInfo(output.as_raw_handle() as HANDLE, &mut info) };
+        if ok == 0 {
+            return Err("couldn't read the console's size".into());
+        }
+        let window = info.srWindow;
+        let span =
+            |from: i16, to: i16| u32::try_from(i32::from(to) - i32::from(from) + 1).unwrap_or(0);
+        Ok((
+            span(window.Left, window.Right),
+            span(window.Top, window.Bottom),
+        ))
+    }
+
+    /// Console input that delivers terminal replies as text, until dropped:
+    /// no line editing, no echo, and escape sequences passed through.
+    struct VtInput {
+        handle: HANDLE,
+        saved: CONSOLE_MODE,
+    }
+
+    impl VtInput {
+        fn enter(input: &File) -> Result<VtInput, String> {
+            let handle = input.as_raw_handle() as HANDLE;
+            let mut saved: CONSOLE_MODE = 0;
+            // SAFETY: plain console calls on the caller's open input handle.
+            unsafe {
+                if GetConsoleMode(handle, &mut saved) == 0 {
+                    return Err("couldn't read the console's mode".into());
+                }
+                if SetConsoleMode(handle, ENABLE_VIRTUAL_TERMINAL_INPUT) == 0 {
+                    return Err("couldn't switch the console to terminal input".into());
+                }
+            }
+            Ok(VtInput { handle, saved })
+        }
+    }
+
+    impl Drop for VtInput {
+        fn drop(&mut self) {
+            // SAFETY: restores the mode read in `enter` on the same handle.
+            unsafe {
+                SetConsoleMode(self.handle, self.saved);
+            }
+        }
+    }
+
+    /// Read until the device attributes arrive or the time is up. Replies
+    /// come in as key events, one character each.
+    fn read_replies(input: &File) -> Result<Vec<u8>, String> {
+        let handle = input.as_raw_handle() as HANDLE;
+        let deadline = Instant::now() + TIMEOUT;
+        let mut replies = Vec::new();
+        let mut records = [INPUT_RECORD::default(); 64];
+        while super::device_attributes(&replies).is_none() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let wait = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+            // SAFETY: waits on the caller's open console input handle.
+            if unsafe { WaitForSingleObject(handle, wait) } != WAIT_OBJECT_0 {
+                break;
+            }
+            let mut read = 0u32;
+            // SAFETY: `records` has room for as many records as it asks for.
+            let ok = unsafe {
+                ReadConsoleInputW(
+                    handle,
+                    records.as_mut_ptr(),
+                    records.len() as u32,
+                    &mut read,
+                )
+            };
+            if ok == 0 {
+                return Err("couldn't read the console's input".into());
+            }
+            let mut units = Vec::new();
+            for record in records.iter().take(read as usize) {
+                if u32::from(record.EventType) != KEY_EVENT {
+                    continue;
+                }
+                // SAFETY: a KEY_EVENT record holds a key event.
+                let key = unsafe { record.Event.KeyEvent };
+                // SAFETY: with ReadConsoleInputW, the character is UTF-16.
+                let unit = unsafe { key.uChar.UnicodeChar };
+                if key.bKeyDown != 0 && unit != 0 {
+                    units.push(unit);
+                }
+            }
+            replies.extend_from_slice(String::from_utf16_lossy(&units).as_bytes());
+        }
+        Ok(replies)
+    }
+}
+
+#[cfg(any(unix, windows, test))]
 fn parse(replies: &[u8]) -> Caps {
     let text = String::from_utf8_lossy(replies);
     Caps {
@@ -286,7 +464,7 @@ fn parse(replies: &[u8]) -> Caps {
 }
 
 /// The two numbers in an XTWINOPS answer, `CSI <prefix> a ; b t`.
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn report(text: &str, prefix: &str) -> Option<(u32, u32)> {
     let start = text.find(prefix)? + prefix.len();
     let rest = &text[start..];
@@ -296,7 +474,7 @@ fn report(text: &str, prefix: &str) -> Option<(u32, u32)> {
 }
 
 /// The color in an OSC 11 answer, `OSC 11 ; rgb:RRRR/GGGG/BBBB`.
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn background(text: &str) -> Option<[u8; 3]> {
     let start = text.find("\x1b]11;rgb:")? + "\x1b]11;rgb:".len();
     let rest = &text[start..];
@@ -310,7 +488,7 @@ fn background(text: &str) -> Option<[u8; 3]> {
 }
 
 /// The parameters of the primary device attributes, `CSI ? … c`.
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn device_attributes(replies: &[u8]) -> Option<&[u8]> {
     replies.windows(3).enumerate().find_map(|(start, window)| {
         if window != b"\x1b[?" {

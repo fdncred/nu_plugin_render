@@ -194,6 +194,7 @@ The rendering stack is MIT and/or Apache-2.0:
 - `lscolors`
 - `unicode-width`
 - `libc` (Unix)
+- `windows-sys` (Windows): the console, for the probe
 - `nu-utils`: nushell's default `LS_COLORS`
 - `arboard` with `image-data` and `wayland-data-control`: the clipboard, as
   nushell's `clip copy` uses it
@@ -244,7 +245,10 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   1000 × 1000 pixels by default), which cuts a tall drawing; `--budget`
   keeps it under. A sixel terminal that doesn't report its cell size falls
   back to `table`.
-- **Windows:** there is no terminal probe yet, so it always falls back.
+- **Windows:** the probe goes through the console API (`CONIN$` in
+  terminal-input mode, read with a timeout), so Windows Terminal, which has
+  sixel, and WezTerm, which has kitty graphics, should draw. It is only
+  compile-checked so far; nobody has run it on Windows.
 - **tmux:** inside tmux 3.4 or later, `render` draws with sixel when the
   terminal tmux runs in has sixel (tmux's `client_termfeatures` says so),
   and falls back to `table` otherwise. Kitty graphics don't pass through

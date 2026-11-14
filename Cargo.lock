@@ -1668,6 +1668,7 @@ dependencies = [
  "png",
  "swash",
  "unicode-width 0.2.3",
+ "windows-sys",
 ]
 
 [[package]]
