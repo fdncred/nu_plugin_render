@@ -1,10 +1,10 @@
 # nu_plugin_render
 
 A prototype Nushell plugin. `render` draws a table as pixels and shows it in
-the terminal with the kitty graphics protocol, so columns line up exactly,
-emoji and CJK keep their width, and nested lists and records show as nested
-cards. A string draws as terminal text in its own ANSI colors, so the output
-of `grid` keeps its layout. When the terminal can't show kitty graphics,
+the terminal with the kitty graphics protocol, or sixel, so columns line up
+exactly, emoji and CJK keep their width, and nested lists and records show
+as nested cards. A string draws as terminal text in its own ANSI colors, so
+the output of `grid` keeps its layout. When the terminal can show neither,
 `render` prints what `table` prints.
 
 ```nu
@@ -155,6 +155,12 @@ From value to pixels, nothing touches the terminal:
   temporary file in the probe, which means it runs on this machine, a band
   goes as raw RGBA in a temporary file (`f=32,t=t`), which the terminal reads
   and deletes. Otherwise it goes inline as base64 PNG (`f=100`).
+- `sixel`, for a terminal without kitty graphics whose device attributes
+  include sixel and that reports its cell size: the whole drawing as one
+  image, drawn pixel for pixel. Over a background the terminal reports, the
+  image is blended onto it first, so edges stay smooth; otherwise pixels
+  less than half opaque are left out. Colors come down to a 256-color
+  palette, without dithering.
 
 Details:
 - **Image size:** text is drawn at about the terminal's font size. Terminals
@@ -189,10 +195,14 @@ The rendering stack is MIT and/or Apache-2.0:
 - `nu-utils`: nushell's default `LS_COLORS`
 - `arboard` with `image-data` and `wayland-data-control`: the clipboard, as
   nushell's `clip copy` uses it
+- `devicons`: file icons for `--icons`, as `table --icons` uses it
+- `icy_sixel`: the sixel encoder
 
 Their trees add:
 - `slotmap`: Zlib, via `fontdb`
 - `moxcms` and `pxfm`: BSD-3-Clause OR Apache-2.0, via `arboard`'s `image`
+- `quantette`, `palette` and the rest of `icy_sixel`'s tree: MIT and/or
+  Apache-2.0, or Zlib OR Apache-2.0 OR MIT
 
 The other licenses `cargo tree` shows come from the Nushell plugin crates,
 which every plugin depends on:
@@ -227,7 +237,10 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
 
 ## Not done yet
 
-- **sixel:** a sixel-only terminal, such as Windows Terminal or foot, falls
+- **sixel:** untested on a real sixel terminal; the tests decode its output
+  back into the image. Some terminals cap a sixel image's size (xterm at
+  1000 × 1000 pixels by default), which cuts a tall drawing; `--budget`
+  keeps it under. A sixel terminal that doesn't report its cell size falls
   back to `table`.
 - **Windows:** there is no terminal probe yet, so it always falls back.
 - **tmux, zellij:** no passthrough, so they fall back.

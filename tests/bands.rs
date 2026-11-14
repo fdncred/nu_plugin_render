@@ -119,6 +119,7 @@ fn bands_join_into_the_whole_table() {
     let theme = Theme::dark();
     let screen = Screen {
         cell: (8, 16),
+        scale: 2,
         columns: 100,
         rows: 30,
     };
@@ -143,6 +144,7 @@ fn bands_join_into_the_whole_table_with_lines() {
     let theme = Theme::dark();
     let screen = Screen {
         cell: (8, 16),
+        scale: 2,
         columns: 100,
         rows: 30,
     };
@@ -195,6 +197,7 @@ fn text_bands_join_into_the_whole_text() {
     let theme = Theme::dark();
     let screen = Screen {
         cell: (8, 16),
+        scale: 2,
         columns: 40,
         rows: 20,
     };
@@ -217,6 +220,7 @@ fn streamed_png_matches_the_whole_drawing() {
     let theme = Theme::dark();
     let screen = Screen {
         cell: (8, 16),
+        scale: 2,
         columns: 100,
         rows: 30,
     };

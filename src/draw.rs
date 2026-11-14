@@ -14,6 +14,8 @@ pub struct Screen {
     pub cell: (u32, u32),
     pub columns: u32,
     pub rows: u32,
+    /// Image pixels per reported pixel. See [`Screen::scale_for`].
+    pub scale: u32,
 }
 
 impl Screen {
@@ -22,13 +24,20 @@ impl Screen {
         cell: (8, 16),
         columns: 160,
         rows: 50,
+        scale: 2,
     };
 
-    /// Image pixels per cell. Terminals that report small cells are
-    /// counting points on a HiDPI screen, so the image gets twice the pixels
-    /// and the terminal fits them into the same cells.
+    /// The scale for a cell this size. A kitty terminal that reports cells
+    /// under 24 pixels tall is counting points on a HiDPI screen, so the
+    /// image gets twice the pixels and the terminal fits them into the same
+    /// cells. A sixel image is drawn pixel for pixel, so it gets 1.
+    pub fn scale_for(cell: (u32, u32), kitty: bool) -> u32 {
+        if kitty && cell.1 < 24 { 2 } else { 1 }
+    }
+
+    /// Image pixels per cell.
     pub fn cell_pixels(&self) -> (u32, u32) {
-        let scale = if self.cell.1 < 24 { 2 } else { 1 };
+        let scale = self.scale.max(1);
         (self.cell.0.max(1) * scale, self.cell.1.max(1) * scale)
     }
 }

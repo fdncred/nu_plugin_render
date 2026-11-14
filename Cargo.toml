@@ -8,6 +8,7 @@ arboard = { version = "3.7.0", default-features = false, features = ["image-data
 base64 = "0.23.1"
 devicons = "0.6.13"
 fontdb = "0.24.0"
+icy_sixel = "0.7.0"
 lscolors = "0.21.0"
 nu-ansi-term = "0.50.3"
 nu-color-config = "0.117.0"

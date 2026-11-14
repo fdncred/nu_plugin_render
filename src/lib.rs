@@ -17,6 +17,7 @@ pub mod kitty;
 pub mod layout;
 pub mod model;
 pub mod paint;
+pub mod sixel;
 pub mod style;
 mod term;
 pub mod text;

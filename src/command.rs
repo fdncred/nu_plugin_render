@@ -22,6 +22,7 @@ use crate::fonts::Rasterizer;
 use crate::kitty;
 use crate::layout::{Settings, Trim, thousands};
 use crate::model::{Builder, Grid, Styles};
+use crate::sixel;
 use crate::style::Theme;
 use crate::term;
 
@@ -184,12 +185,14 @@ impl PluginCommand for Render {
             None
         } else {
             match term::probe(engine) {
-                Ok(caps) if caps.kitty => Some(caps),
+                // Sixel needs the cell's size in pixels, to know how big to
+                // draw; kitty graphics fit the image to cells either way.
+                Ok(caps) if caps.kitty || (caps.sixel && caps.cell.is_some()) => Some(caps),
                 Ok(caps) => {
                     debug(if caps.sixel {
-                        "falling back to `table`: the terminal has sixel, which isn't drawn yet, but no kitty graphics"
+                        "falling back to `table`: the terminal has sixel but didn't say how big its cells are"
                     } else {
-                        "falling back to `table`: the terminal has no kitty graphics"
+                        "falling back to `table`: the terminal has neither kitty graphics nor sixel"
                     });
                     return fallback(engine, call, value, metadata);
                 }
@@ -204,10 +207,14 @@ impl PluginCommand for Render {
         let fonts = plugin.fonts().map_err(LabeledError::new)?;
         timer.lap("fonts");
         let theme = Theme::for_background(caps.as_ref().and_then(|caps| caps.background));
-        let mut screen = caps.as_ref().map_or(Screen::OFFLINE, |caps| Screen {
-            cell: caps.cell.unwrap_or(Screen::OFFLINE.cell),
-            columns: caps.columns.max(1),
-            rows: caps.rows.max(1),
+        let mut screen = caps.as_ref().map_or(Screen::OFFLINE, |caps| {
+            let cell = caps.cell.unwrap_or(Screen::OFFLINE.cell);
+            Screen {
+                cell,
+                columns: caps.columns.max(1),
+                rows: caps.rows.max(1),
+                scale: Screen::scale_for(cell, caps.kitty),
+            }
         });
         if let Some(width) = width {
             screen.columns = width;
@@ -338,6 +345,24 @@ impl PluginCommand for Render {
                 timer.report()
             ));
             return Ok(Value::binary(png, head).into_pipeline_data());
+        }
+
+        // A sixel terminal gets the whole drawing as one image: terminals
+        // disagree on where the cursor goes after one, so bands could leave
+        // gaps.
+        if let Some(caps) = caps.as_ref().filter(|caps| !caps.kitty) {
+            let (width, height, rgba) =
+                draw::whole_rgba(&drawing, &theme, &fonts).map_err(LabeledError::new)?;
+            timer.lap("paint");
+            let out =
+                sixel::encode(rgba, width, height, caps.background).map_err(LabeledError::new)?;
+            timer.lap("sixel");
+            debug(&format!(
+                "{width} x {height} pixels of sixel, {} bytes; {}",
+                out.len(),
+                timer.report()
+            ));
+            return Ok(Value::string(out, head).into_pipeline_data());
         }
 
         // A terminal on this machine reads raw pixels from temporary files,
