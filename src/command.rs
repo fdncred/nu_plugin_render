@@ -1,0 +1,403 @@
+//! The `render` command.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use lscolors::LsColors;
+use nu_ansi_term::Style;
+use nu_color_config::{color_record_to_nustyle, lookup_ansi_color_style};
+use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
+use nu_protocol::engine::Closure;
+use nu_protocol::{
+    Category, Config, IntoPipelineData as _, LabeledError, PipelineData, PipelineMetadata,
+    Signature, Spanned, SyntaxShape, Type, Value,
+};
+
+use crate::RenderPlugin;
+use crate::draw::{self, Screen};
+use crate::fonts::Rasterizer;
+use crate::kitty;
+use crate::model::{Builder, Styles};
+use crate::style::Theme;
+use crate::term;
+
+/// Nested lists and records deeper than this show as a summary.
+const MAX_DEPTH: usize = 4;
+
+/// Cell rows per image band. Short bands guard against a terminal that
+/// stops drawing an image once its top scrolls off the screen, which would
+/// leave a tall blank. But every image costs the terminal time: in Rex,
+/// `$env` at 143 columns took 141 ms to show in 22-row bands, 240 ms in
+/// 4-row bands, and 318 ms in 1-row bands.
+const BAND_ROWS: u32 = 4;
+
+pub struct Render;
+
+impl PluginCommand for Render {
+    type Plugin = RenderPlugin;
+
+    fn name(&self) -> &str {
+        "render"
+    }
+
+    fn description(&self) -> &str {
+        "Draw a table as an image, with the kitty graphics protocol."
+    }
+
+    fn extra_description(&self) -> &str {
+        "Prints what `table` prints when the terminal can't show kitty graphics."
+    }
+
+    fn signature(&self) -> Signature {
+        Signature::build(self.name())
+            .input_output_types(vec![(Type::Any, Type::Any)])
+            .switch(
+                "png",
+                "Return the drawing as PNG bytes instead of drawing it.",
+                None,
+            )
+            .switch(
+                "copy",
+                "Copy the drawing to the clipboard as an image instead of drawing it.",
+                Some('c'),
+            )
+            .switch("mono", "Draw a table in a monospace font.", None)
+            .named(
+                "width",
+                SyntaxShape::Int,
+                "The widest the drawing may be, in terminal columns. Defaults to the terminal's width, or 160 with --png or --copy.",
+                Some('w'),
+            )
+            .category(Category::Viewers)
+    }
+
+    fn run(
+        &self,
+        plugin: &RenderPlugin,
+        engine: &EngineInterface,
+        call: &EvaluatedCall,
+        input: PipelineData,
+    ) -> Result<PipelineData, LabeledError> {
+        let head = call.head;
+        let as_png = call.has_flag("png")?;
+        let copy = call.has_flag("copy")?;
+        let mono = call.has_flag("mono")?;
+        let width: Option<Spanned<i64>> = call.get_flag("width")?;
+        let width = match width {
+            Some(Spanned { item, span }) => {
+                Some(u32::try_from(item).ok().filter(|w| *w > 0).ok_or_else(|| {
+                    LabeledError::new("`--width` must be a positive number of columns")
+                        .with_label("not a positive number", span)
+                })?)
+            }
+            None => None,
+        };
+        let metadata = input.metadata_ref().cloned();
+        let value = input.into_value(head)?;
+        let mut timer = Timer::new();
+
+        let caps = if as_png || copy {
+            None
+        } else {
+            match term::probe(engine) {
+                Ok(caps) if caps.kitty => Some(caps),
+                Ok(caps) => {
+                    debug(if caps.sixel {
+                        "falling back to `table`: the terminal has sixel, which isn't drawn yet, but no kitty graphics"
+                    } else {
+                        "falling back to `table`: the terminal has no kitty graphics"
+                    });
+                    return fallback(engine, call, value, metadata);
+                }
+                Err(reason) => {
+                    debug(&format!("falling back to `table`: {reason}"));
+                    return fallback(engine, call, value, metadata);
+                }
+            }
+        };
+
+        timer.lap("probe");
+        let fonts = plugin.fonts().map_err(LabeledError::new)?;
+        timer.lap("fonts");
+        let theme = Theme::for_background(caps.as_ref().and_then(|caps| caps.background));
+        let mut screen = caps.as_ref().map_or(Screen::OFFLINE, |caps| Screen {
+            cell: caps.cell.unwrap_or(Screen::OFFLINE.cell),
+            columns: caps.columns.max(1),
+            rows: caps.rows.max(1),
+        });
+        if let Some(width) = width {
+            screen.columns = width;
+        }
+
+        let drawing = match &value {
+            // A string, such as `grid`'s output, may line itself up with
+            // spaces, so it keeps to terminal cells in a monospace font.
+            Value::String { val, .. } => {
+                draw::lay_out_text(val, &fonts, fonts.mono, &theme, &screen)
+            }
+            _ => {
+                let config = engine.get_config()?;
+                let mut styles = EngineStyles::new(engine, &config, metadata.as_ref());
+                let grid = Builder {
+                    config: &config,
+                    theme: &theme,
+                    styles: &mut styles,
+                    max_depth: MAX_DEPTH,
+                }
+                .grid(&value, 0);
+                timer.lap("model");
+                let faces = if mono { fonts.mono } else { fonts.sans };
+                draw::lay_out(&grid, &fonts, faces, &theme, &screen)
+            }
+        }
+        .map_err(LabeledError::new)?;
+        if drawing.rows == 0 {
+            return fallback(engine, call, value, metadata);
+        }
+        timer.lap("layout");
+        if copy {
+            let (width, height, rgba) =
+                draw::whole_rgba(&drawing, &theme, &fonts).map_err(LabeledError::new)?;
+            plugin.copy_image(width, height, rgba).map_err(|err| {
+                LabeledError::new("couldn't copy the image to the clipboard").with_label(err, head)
+            })?;
+            debug(&format!(
+                "copied {width} x {height} pixels; {}",
+                timer.report()
+            ));
+            if !as_png {
+                return Ok(PipelineData::empty());
+            }
+        }
+
+        if as_png {
+            let mut rasterizer = Rasterizer::new(&fonts);
+            let png =
+                draw::whole_png(&drawing, &theme, &mut rasterizer).map_err(LabeledError::new)?;
+            debug(&format!(
+                "{} x {} cells, {} bytes of PNG; {}",
+                drawing.columns,
+                drawing.rows,
+                png.len(),
+                timer.report()
+            ));
+            return Ok(Value::binary(png, head).into_pipeline_data());
+        }
+
+        // A terminal on this machine reads raw pixels from temporary files,
+        // which skips PNG on both sides and base64 in between.
+        let temp_files = caps.as_ref().is_some_and(|caps| caps.temp_files);
+        if temp_files {
+            kitty::sweep_temp_files();
+        }
+        let bands = draw::paint_bands(&drawing, &theme, &fonts, BAND_ROWS, |canvas| {
+            if temp_files {
+                kitty::temp_file(&canvas.rgba, canvas.width, canvas.height)
+            } else {
+                draw::png(&canvas).map(kitty::Payload::Png)
+            }
+        })
+        .map_err(LabeledError::new)?;
+        timer.lap(if temp_files { "paint" } else { "paint+png" });
+        let mut out = String::new();
+        let last = bands.len().saturating_sub(1);
+        for (index, (rows, payload)) in bands.iter().enumerate() {
+            kitty::place(payload, drawing.columns, *rows, index == last, &mut out);
+        }
+        timer.lap("escape");
+        debug(&format!(
+            "{} x {} cells, {} bytes; {}",
+            drawing.columns,
+            drawing.rows,
+            out.len(),
+            timer.report()
+        ));
+        Ok(Value::string(out, head).into_pipeline_data())
+    }
+}
+
+/// Hand the value to `table`, for terminals that can't show images.
+fn fallback(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    value: Value,
+    metadata: Option<PipelineMetadata>,
+) -> Result<PipelineData, LabeledError> {
+    let table = engine
+        .find_decl("table")?
+        .ok_or_else(|| LabeledError::new("`table` isn't available to fall back on"))?;
+    Ok(engine.call_decl(
+        table,
+        EvaluatedCall::new(call.head),
+        PipelineData::value(value, metadata),
+        true,
+        false,
+    )?)
+}
+
+/// A note on stderr when `NU_PLUGIN_RENDER_DEBUG` is set: why drawing was
+/// skipped, or where the time went.
+fn debug(note: &str) {
+    if std::env::var_os("NU_PLUGIN_RENDER_DEBUG").is_some() {
+        eprintln!("render: {note}");
+    }
+}
+
+/// Time spent per phase, summed over bands.
+struct Timer {
+    last: std::time::Instant,
+    phases: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl Timer {
+    fn new() -> Self {
+        Timer {
+            last: std::time::Instant::now(),
+            phases: Vec::new(),
+        }
+    }
+
+    fn lap(&mut self, phase: &'static str) {
+        let now = std::time::Instant::now();
+        let spent = now - self.last;
+        self.last = now;
+        match self.phases.iter_mut().find(|(name, _)| *name == phase) {
+            Some((_, total)) => *total += spent,
+            None => self.phases.push((phase, spent)),
+        }
+    }
+
+    fn report(&self) -> String {
+        self.phases
+            .iter()
+            .map(|(name, spent)| format!("{name} {:.1}ms", spent.as_secs_f64() * 1000.0))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Styles from `color_config`, its closures, and `LS_COLORS`.
+struct EngineStyles<'a> {
+    engine: &'a EngineInterface,
+    config: &'a Config,
+    colors: HashMap<String, Style>,
+    closures: HashMap<String, Spanned<Closure>>,
+    /// Closure results, by type and the value's text.
+    computed: HashMap<(String, String), Style>,
+    /// `$env.config.ls.use_ls_colors`.
+    use_ls_colors: bool,
+    ls_colors: LsColors,
+    cwd: PathBuf,
+    path_columns: Vec<String>,
+}
+
+impl<'a> EngineStyles<'a> {
+    fn new(
+        engine: &'a EngineInterface,
+        config: &'a Arc<Config>,
+        metadata: Option<&PipelineMetadata>,
+    ) -> Self {
+        let mut colors = HashMap::new();
+        let mut closures = HashMap::new();
+        for (key, value) in &config.color_config {
+            match value {
+                Value::Closure { val, .. } => {
+                    closures.insert(
+                        key.clone(),
+                        Spanned {
+                            item: (**val).clone(),
+                            span: value.span(),
+                        },
+                    );
+                }
+                other => {
+                    if let Some(style) = style_of(other) {
+                        colors.insert(key.clone(), style);
+                    }
+                }
+            }
+        }
+        // Without `$env.LS_COLORS`, nushell's own colors, as `table` uses.
+        let ls_colors = nu_utils::get_ls_colors(
+            engine
+                .get_env_var("LS_COLORS")
+                .ok()
+                .flatten()
+                .and_then(|value| value.coerce_into_string().ok()),
+        );
+        EngineStyles {
+            engine,
+            config,
+            colors,
+            closures,
+            computed: HashMap::new(),
+            use_ls_colors: config.ls.use_ls_colors,
+            ls_colors,
+            cwd: engine
+                .get_current_dir()
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            path_columns: metadata.map(|m| m.path_columns.clone()).unwrap_or_default(),
+        }
+    }
+}
+
+/// The style a `color_config` value names: a color name, hex, or record.
+fn style_of(value: &Value) -> Option<Style> {
+    match value {
+        Value::String { val, .. } => Some(lookup_ansi_color_style(val)),
+        Value::Record { .. } => Some(color_record_to_nustyle(value)),
+        _ => None,
+    }
+}
+
+impl Styles for EngineStyles<'_> {
+    fn value(&mut self, key: &str, value: &Value) -> Style {
+        let Some(closure) = self.closures.get(key) else {
+            return self.colors.get(key).copied().unwrap_or_default();
+        };
+        let cache_key = (key.to_string(), value.to_abbreviated_string(self.config));
+        if let Some(style) = self.computed.get(&cache_key) {
+            return *style;
+        }
+        let style =
+            match self
+                .engine
+                .eval_closure(closure, vec![value.clone()], Some(value.clone()))
+            {
+                Ok(result) => style_of(&result).unwrap_or_default(),
+                Err(err) => {
+                    debug(&format!("the `{key}` color closure failed: {err}"));
+                    Style::default()
+                }
+            };
+        self.computed.insert(cache_key, style);
+        style
+    }
+
+    fn named(&self, key: &str) -> Style {
+        self.colors.get(key).copied().unwrap_or_default()
+    }
+
+    fn path(&mut self, column: &str, text: &str) -> Option<Style> {
+        if !self.use_ls_colors
+            || !self
+                .path_columns
+                .iter()
+                .any(|path_column| path_column == column)
+        {
+            return None;
+        }
+        // As `table` does: the file's own metadata, without following a
+        // link, and a path with no style keeps the default color rather
+        // than taking the `string` color.
+        let metadata = std::fs::symlink_metadata(self.cwd.join(text)).ok();
+        Some(
+            self.ls_colors
+                .style_for_path_with_metadata(text, metadata.as_ref())
+                .map(lscolors::Style::to_nu_ansi_term_style)
+                .unwrap_or_default(),
+        )
+    }
+}

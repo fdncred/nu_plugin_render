@@ -1,0 +1,21 @@
+[package]
+name = "nu_plugin_render"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arboard = { version = "3.7.0", default-features = false, features = ["image-data", "wayland-data-control"] }
+base64 = "0.23.1"
+fontdb = "0.24.0"
+lscolors = "0.21.0"
+nu-ansi-term = "0.50.3"
+nu-color-config = "0.117.0"
+nu-plugin = "0.117.0"
+nu-protocol = "0.117.0"
+nu-utils = "0.117.0"
+png = "0.18.1"
+swash = "0.2.10"
+unicode-width = "0.2.3"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
