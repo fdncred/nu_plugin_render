@@ -327,7 +327,10 @@ impl PluginCommand for Render {
         if temp_files {
             kitty::sweep_temp_files();
         }
-        let bands = draw::paint_bands(&drawing, &theme, &fonts, BAND_ROWS, |canvas| {
+        // A band must fit on the screen: `place` makes room with newlines and
+        // moves back up, and moving up stops at the top.
+        let band_rows = BAND_ROWS.min(screen.rows.saturating_sub(1)).max(1);
+        let bands = draw::paint_bands(&drawing, &theme, &fonts, band_rows, |canvas| {
             if temp_files {
                 kitty::temp_file(&canvas.rgba, canvas.width, canvas.height)
             } else {
@@ -564,8 +567,10 @@ fn fallback(
         .named
         .iter()
         .filter(|(name, value)| {
-            // `card` is `render`'s own; `table` uses its configured theme.
-            let card = matches!(value, Some(Value::String { val, .. }) if val.eq_ignore_ascii_case(crate::border::CARD));
+            // `--theme card` is `render`'s own; `table` uses its configured
+            // theme.
+            let card = name.item == "theme"
+                && matches!(value, Some(Value::String { val, .. }) if val.eq_ignore_ascii_case(crate::border::CARD));
             TABLE_FLAGS.contains(&name.item.as_str()) && !card
         })
         .cloned()
