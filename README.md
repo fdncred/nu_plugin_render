@@ -275,17 +275,18 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
     sides: 191 ms and 347 ms.
   - **Shared memory (`t=s`):** Rex refuses it.
 - **Clipboard on Linux:** copied data lasts only while the process that
-  copied it holds the clipboard. The plugin keeps its clipboard open
-  between calls, but when nushell stops the plugin, the image goes too,
-  unless a clipboard manager has taken it.
+  copied it holds the clipboard. The plugin keeps running and keeps its
+  clipboard open, but when it stops, with nushell or `plugin stop render`,
+  the image goes too, unless a clipboard manager has taken it.
 - **Leftover files:** output captured and never displayed leaves its
   temporary files until the next `render` call (or the system's own cleanup
   if there is none).
 - **Type-ahead:** the first `render` in a session reads `/dev/tty` in raw
   mode and throws away whatever isn't an answer, so keys typed during it
-  are lost. Later calls reuse its answers, so they lose nothing. After
-  changing the terminal's font size, `plugin stop render` makes it probe
-  again.
+  are lost. The plugin asks nushell to keep it running rather than stop it
+  when idle, so later calls reuse its answers and lose nothing. It holds
+  about 60 MiB after drawing `$env | render -e`. After changing the
+  terminal's font size, `plugin stop render` makes it probe again.
 - **Light theme:** checked in images drawn with it, but not yet on a
   terminal with a light background. Rex doesn't answer OSC 11, so it always
   gets the dark theme.

@@ -129,6 +129,7 @@ impl PluginCommand for Render {
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
         let head = call.head;
+        keep_running(engine);
         if call.has_flag("list")? {
             let names = Border::names().map(|name| Value::string(name, head));
             return Ok(Value::list(names.collect(), head).into_pipeline_data());
@@ -411,6 +412,21 @@ impl PluginCommand for Render {
             timer.report()
         ));
         Ok(Value::string(out, head).into_pipeline_data())
+    }
+}
+
+/// Whether this plugin process has asked nushell to keep it running.
+static KEPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask nushell, once, not to stop this plugin when it's idle, so it keeps
+/// the terminal's answers, its fonts, and on Linux the clipboard's image.
+fn keep_running(engine: &EngineInterface) {
+    if !KEPT.swap(true, Ordering::SeqCst)
+        && let Err(err) = engine.set_gc_disabled(true)
+    {
+        debug(&format!(
+            "couldn't ask nushell to keep the plugin running: {err}"
+        ));
     }
 }
 
