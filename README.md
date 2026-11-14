@@ -255,11 +255,14 @@ On macOS:
 
 ## Not done yet
 
-- **sixel:** untested on a real sixel terminal; the tests decode its output
-  back into the image. Some terminals cap a sixel image's size (xterm at
-  1000 × 1000 pixels by default), which cuts a tall drawing; `--budget`
-  keeps it under. A sixel terminal that doesn't report its cell size falls
-  back to `table`.
+- **sixel:** untested on a real sixel terminal. The tests decode its output
+  back into the image. In a pty that answers like a sixel terminal,
+  `render` draws with sixel, and a decoder written separately from
+  `icy_sixel` shows the image as drawn. `$env | render -e` there is
+  1190 × 11816 pixels and encodes in about 200 ms, to 4 MB. Some terminals
+  cap a sixel image's size (xterm at 1000 × 1000 pixels by default), which
+  cuts a tall drawing; `--budget` keeps it under. A sixel terminal that
+  doesn't report its cell size falls back to `table`.
 - **Windows:** the probe goes through the console API (`CONIN$` in
   terminal-input mode, read with a timeout), so Windows Terminal, which has
   sixel, and WezTerm, which has kitty graphics, should draw. It is only
