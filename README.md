@@ -180,8 +180,9 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   back to `table`.
 - **Windows:** there is no terminal probe yet, so it always falls back.
 - **tmux, zellij:** no passthrough, so they fall back.
-- **Rex:** the top part of tall output, such as `$env`, stays blank.
-  Ghostty shows the same output whole. The cause isn't known yet.
+- **Rex:** Rex keeps about 128 MiB of images and drops the oldest first,
+  so the top of a larger drawing stays blank. `$env` in a 260-column window
+  is about 256 MiB. Ghostty keeps up to 320 MB by default.
 - **Speed:** `$env` at 143 columns (142 × 461 cells, about 34 million
   pixels) takes about 130 ms in the plugin, and Rex then takes about 230 ms
   to show it. `table -e` takes about 20 ms. Of the plugin's time, about
