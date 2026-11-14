@@ -132,7 +132,6 @@ impl PluginCommand for Render {
         let metadata = input.metadata_ref().cloned();
         let value = input.into_value(head)?;
         let mut timer = Timer::new();
-        let value = run_display_hook(engine, value, metadata.as_ref());
 
         let caps = if as_png || copy {
             None
@@ -171,7 +170,14 @@ impl PluginCommand for Render {
             // A string, such as `grid`'s output, may line itself up with
             // spaces, so it keeps to terminal cells in a monospace font.
             Value::String { val, .. } => {
-                draw::lay_out_text(val, &fonts, fonts.mono, &theme, &screen)
+                let hooked = display_hook(engine, &value, metadata.as_ref());
+                draw::lay_out_text(
+                    hooked.as_deref().unwrap_or(val),
+                    &fonts,
+                    fonts.mono,
+                    &theme,
+                    &screen,
+                )
             }
             _ => {
                 let config = engine.get_config()?;
@@ -313,25 +319,26 @@ impl Drop for HookGuard {
 
 /// Run the `display_output` hook on a string that carries a content type,
 /// such as the output of `to json`, the way nushell does before showing
-/// it, so a hook that colors JSON or nuon colors the drawing too. Other
-/// values skip it: a hook ends in `table`, which would turn data into text.
-/// On any failure the string is drawn as it came.
-fn run_display_hook(
+/// it, so a hook that colors JSON or nuon colors the drawing too. Only for
+/// drawing: the fallback hands `table` the value as it came. Other values
+/// skip it, since a hook ends in `table`, which would turn data into text.
+/// `None` when the hook doesn't apply or fails.
+fn display_hook(
     engine: &EngineInterface,
-    value: Value,
+    value: &Value,
     metadata: Option<&PipelineMetadata>,
-) -> Value {
+) -> Option<String> {
     if !matches!(value, Value::String { .. })
         || metadata.is_none_or(|metadata| metadata.content_type.is_none())
         || HOOKS_RUNNING.load(Ordering::SeqCst) > 0
     {
-        return value;
+        return None;
     }
     let config = match engine.get_config() {
         Ok(config) => config,
         Err(err) => {
             debug(&format!("skipping `display_output`: {err}"));
-            return value;
+            return None;
         }
     };
     let hook = match &config.hooks.display_output {
@@ -341,9 +348,9 @@ fn run_display_hook(
         },
         Some(_) => {
             debug("skipping `display_output`: a plugin can only run a closure hook");
-            return value;
+            return None;
         }
-        None => return value,
+        None => return None,
     };
     let span = value.span();
     let _guard = HookGuard::enter();
@@ -358,17 +365,17 @@ fn run_display_hook(
         Err(err) => Err(err),
     };
     match output {
-        Ok(output @ Value::String { .. }) => output,
+        Ok(Value::String { val, .. }) => Some(val),
         Ok(other) => {
             debug(&format!(
                 "ignoring `display_output`: it returned {}, not a string",
                 other.get_type()
             ));
-            value
+            None
         }
         Err(err) => {
             debug(&format!("`display_output` failed: {err}"));
-            value
+            None
         }
     }
 }

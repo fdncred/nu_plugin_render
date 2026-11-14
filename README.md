@@ -105,6 +105,8 @@ A string, such as `grid`'s output, draws as terminal text instead:
   - Other values skip the hook, since a hook ends in `table`, which would
     turn them into text.
   - A `render` inside the hook doesn't run the hook again.
+  - Only a drawing goes through the hook. When `render` falls back, `table`
+    gets the string as it came, and nushell's own hook runs as usual.
   - A hook written as a string, not a closure, can't run from a plugin and
     is skipped.
 - **Box drawing:** `│` and `─` draw as thin lines that join from line to
