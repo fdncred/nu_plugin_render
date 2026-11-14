@@ -217,8 +217,9 @@ On macOS:
 
 [DEVELOPMENT.md](DEVELOPMENT.md) explains [how it works](DEVELOPMENT.md#how-it-works),
 lists the [dependencies](DEVELOPMENT.md#dependencies) and their licenses, and
-covers the [tests](DEVELOPMENT.md#tests) and [releasing](DEVELOPMENT.md#releasing).
-[TODO.md](TODO.md) lists what's unfinished or untested.
+covers the [tests](DEVELOPMENT.md#tests). [RELEASE.md](RELEASE.md) walks
+through making a release, and [TODO.md](TODO.md) lists what's unfinished or
+untested.
 
 ## License
 

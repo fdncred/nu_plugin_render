@@ -115,18 +115,5 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
 
 ## Releasing
 
-1. Set `version` in Cargo.toml and commit.
-2. Tag that version with a `v` in front and push the tag: `git tag v0.1.0`,
-   then `git push origin v0.1.0`.
-3. The Release workflow, `.github/workflows/release.yml`, builds the six
-   archives and the shell and PowerShell installers with
-   [dist](https://github.com/axodotdev/cargo-dist), and publishes them as
-   the GitHub release for the tag. dist stops if the tag doesn't match the
-   version in Cargo.toml.
-4. Run `cargo publish` last, so every version on crates.io has its binaries.
-
-binstall reads `[package.metadata.binstall]` from the crate on crates.io and
-downloads the archive for the user's platform from the GitHub release.
-
-dist writes the workflow from `dist-workspace.toml`. To change the workflow,
-change that file and run `dist generate` with the dist version it pins.
+[RELEASE.md](RELEASE.md) has every step, from setting the version to
+`cargo publish`.
