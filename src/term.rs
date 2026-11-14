@@ -134,6 +134,14 @@ mod unix {
             let _ = std::fs::remove_file(&probe_file);
         }
         let mut caps = parse(&replies);
+        if std::env::var_os("TMUX").is_some() {
+            // tmux answers for itself: it may report sixel when the terminal
+            // it draws on has none, and then shows nothing. It doesn't pass
+            // kitty graphics on.
+            caps.kitty = false;
+            caps.temp_files = false;
+            caps.sixel = caps.sixel && tmux_terminal_has_sixel();
+        }
         caps.columns = u32::from(size.ws_col);
         caps.rows = u32::from(size.ws_row);
         if caps.cell.is_none() && size.ws_xpixel > 0 && size.ws_col > 0 && size.ws_row > 0 {
@@ -146,6 +154,20 @@ mod unix {
             return Err("the terminal didn't answer".into());
         }
         Ok(caps)
+    }
+
+    /// Whether the terminal tmux draws on takes sixel images, from tmux's
+    /// own record of that terminal's features.
+    fn tmux_terminal_has_sixel() -> bool {
+        std::process::Command::new("tmux")
+            .args(["display-message", "-p", "#{client_termfeatures}"])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout)
+                        .split(',')
+                        .any(|feature| feature.trim() == "sixel")
+            })
     }
 
     /// The window's size, in cells and, when the terminal says, pixels.

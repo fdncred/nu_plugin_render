@@ -201,6 +201,8 @@ impl PluginCommand for Render {
                 Ok(caps) => {
                     debug(if caps.sixel {
                         "falling back to `table`: the terminal has sixel but didn't say how big its cells are"
+                    } else if std::env::var_os("TMUX").is_some() {
+                        "falling back to `table`: inside tmux, whose terminal has no sixel"
                     } else {
                         "falling back to `table`: the terminal has neither kitty graphics nor sixel"
                     });

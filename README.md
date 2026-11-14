@@ -245,7 +245,11 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   keeps it under. A sixel terminal that doesn't report its cell size falls
   back to `table`.
 - **Windows:** there is no terminal probe yet, so it always falls back.
-- **tmux, zellij:** no passthrough, so they fall back.
+- **tmux:** inside tmux 3.4 or later, `render` draws with sixel when the
+  terminal tmux runs in has sixel (tmux's `client_termfeatures` says so),
+  and falls back to `table` otherwise. Kitty graphics don't pass through
+  tmux. Drawing inside tmux is untested on a sixel terminal.
+- **zellij:** untested.
 - **Rex:** the top of a tall drawing stays blank. `$env | render -e` at 148
   columns loses about 60% of its height, drawn at full resolution or at a
   quarter of the pixels. Rex still holds the images but doesn't draw them:
