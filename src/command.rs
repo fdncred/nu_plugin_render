@@ -11,15 +11,16 @@ use nu_color_config::{color_record_to_nustyle, lookup_ansi_color_style};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::engine::Closure;
 use nu_protocol::{
-    Category, Config, IntoPipelineData as _, LabeledError, PipelineData, PipelineMetadata, Record,
-    Signature, Spanned, SyntaxShape, Type, Value,
+    Category, Config, FooterMode, IntoPipelineData as _, LabeledError, PipelineData,
+    PipelineMetadata, Record, Signature, Spanned, SyntaxShape, TrimStrategy, Type, Value,
 };
 
 use crate::RenderPlugin;
 use crate::draw::{self, Screen};
 use crate::fonts::Rasterizer;
 use crate::kitty;
-use crate::model::{Builder, Styles};
+use crate::layout::Trim;
+use crate::model::{Builder, Grid, Styles};
 use crate::style::Theme;
 use crate::term;
 
@@ -174,11 +175,21 @@ impl PluginCommand for Render {
             }
             _ => {
                 let config = engine.get_config()?;
+                // An empty list or record shows what `table` shows: a
+                // dimmed `empty list` with `show_empty`, nothing without.
+                let empty = match &value {
+                    Value::List { vals, .. } if vals.is_empty() => Some("list"),
+                    Value::Record { val, .. } if val.is_empty() => Some("record"),
+                    _ => None,
+                };
+                if empty.is_some() && !config.table.show_empty {
+                    return Ok(Value::string("", head).into_pipeline_data());
+                }
                 let abbreviated = abbreviated
                     .or(config.table.abbreviated_row_count)
                     .and_then(|keep| abbreviate(&value, keep));
                 let mut styles = EngineStyles::new(engine, &config, metadata.as_ref());
-                let grid = Builder {
+                let mut grid = Builder {
                     config: &config,
                     theme: &theme,
                     styles: &mut styles,
@@ -192,9 +203,26 @@ impl PluginCommand for Render {
                     icons,
                 }
                 .grid(abbreviated.as_ref().unwrap_or(&value), 0);
+                if let Some(kind) = empty {
+                    grid = Grid::placeholder(format!("empty {kind}"), &theme);
+                }
+                grid.footer = grid.header.is_some()
+                    && needs_footer(
+                        config.footer_mode,
+                        grid.count_rows(config.table.footer_inheritance),
+                        screen.rows,
+                    );
+                let trim = match &config.table.trim {
+                    TrimStrategy::Wrap { try_to_keep_words } => Trim::Wrap {
+                        keep_words: *try_to_keep_words,
+                    },
+                    TrimStrategy::Truncate { suffix } => Trim::Truncate {
+                        suffix: suffix.clone().unwrap_or_default(),
+                    },
+                };
                 timer.lap("model");
                 let faces = if mono { fonts.mono } else { fonts.sans };
-                draw::lay_out(&grid, &fonts, faces, &theme, &screen)
+                draw::lay_out(&grid, &fonts, faces, &theme, &screen, trim)
             }
         }
         .map_err(LabeledError::new)?;
@@ -400,6 +428,17 @@ fn abbreviate(value: &Value, keep: usize) -> Option<Value> {
             Some(Value::record(record, span))
         }
         _ => None,
+    }
+}
+
+/// Whether the header shows again below the rows, per `footer_mode`, as
+/// `table` decides it. `auto` compares the rows with the screen's height.
+fn needs_footer(mode: FooterMode, rows: usize, screen_rows: u32) -> bool {
+    match mode {
+        FooterMode::Never => false,
+        FooterMode::Always => true,
+        FooterMode::RowCount(limit) => rows as u64 > limit,
+        FooterMode::Auto => u64::from(screen_rows) <= rows as u64,
     }
 }
 
@@ -646,6 +685,15 @@ mod tests {
             abbreviate(&ints(0..3), 0),
             Some(Value::test_list(Vec::new()))
         );
+    }
+
+    #[test]
+    fn footer_follows_footer_mode() {
+        assert!(!needs_footer(FooterMode::RowCount(5), 5, 40));
+        assert!(needs_footer(FooterMode::RowCount(5), 6, 40));
+        assert!(needs_footer(FooterMode::Auto, 40, 40));
+        assert!(!needs_footer(FooterMode::Auto, 39, 40));
+        assert!(!needs_footer(FooterMode::Never, 1000, 40));
     }
 
     #[test]

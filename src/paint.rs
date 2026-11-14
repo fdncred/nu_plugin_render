@@ -216,7 +216,7 @@ impl Painter<'_, '_> {
             if index % 2 == 1 && canvas.touches(y + row.y, row.height) {
                 let corners = Corners {
                     top: false,
-                    bottom: index == last,
+                    bottom: index == last && !block.footer,
                 };
                 canvas.round_rect(
                     Rect {
@@ -267,6 +267,38 @@ impl Painter<'_, '_> {
             );
             for (column, cell) in block.columns.iter().zip(&block.header) {
                 self.cell(canvas, cell, x + column.x, y + self.geometry.pad_y);
+            }
+            if block.footer {
+                // The header again, rule above it, closing the card.
+                let top = y + block.height - block.header_height;
+                canvas.round_rect(
+                    Rect {
+                        x,
+                        y: top,
+                        w: block.width,
+                        h: block.header_height,
+                    },
+                    radius,
+                    Corners {
+                        top: false,
+                        bottom: true,
+                    },
+                    band,
+                );
+                canvas.round_rect(
+                    Rect {
+                        x,
+                        y: top,
+                        w: block.width,
+                        h: rule,
+                    },
+                    0.0,
+                    Corners::NONE,
+                    self.theme.rule,
+                );
+                for (column, cell) in block.columns.iter().zip(&block.header) {
+                    self.cell(canvas, cell, x + column.x, top + self.geometry.pad_y);
+                }
             }
         }
 

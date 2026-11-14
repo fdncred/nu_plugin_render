@@ -3,6 +3,7 @@
 
 use nu_plugin_render::draw::{self, Body, Drawing, Screen};
 use nu_plugin_render::fonts::{Fonts, Rasterizer};
+use nu_plugin_render::layout::Trim;
 use nu_plugin_render::model::{Align, Cell, Content, Grid};
 use nu_plugin_render::style::Theme;
 
@@ -28,6 +29,7 @@ fn nested(theme: &Theme) -> Cell {
                 ]
             })
             .collect(),
+        footer: false,
         align: vec![Align::Left, Align::Decimal],
     };
     Cell {
@@ -67,6 +69,7 @@ fn table(theme: &Theme) -> Grid {
         ]),
         index: Some((0..40).map(|i| text(theme, &i.to_string())).collect()),
         rows,
+        footer: false,
         align: vec![Align::Left, Align::Left, Align::Right],
     }
 }
@@ -116,8 +119,15 @@ fn bands_join_into_the_whole_table() {
         columns: 100,
         rows: 30,
     };
-    let drawing =
-        draw::lay_out(&table(&theme), &fonts, fonts.sans, &theme, &screen).expect("layout");
+    let drawing = draw::lay_out(
+        &table(&theme),
+        &fonts,
+        fonts.sans,
+        &theme,
+        &screen,
+        Trim::Wrap { keep_words: true },
+    )
+    .expect("layout");
     assert_bands_match(&drawing, &theme, &fonts);
 }
 

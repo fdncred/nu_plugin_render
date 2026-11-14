@@ -70,11 +70,18 @@ on stderr, why `render` fell back to `table`, or how long each phase took.
   on the decimal point, at `float_precision`.
 - **Nested values:** with `--expand`, lists and records nest as smaller
   cards.
+- **Footer:** the header again below the rows, per `footer_mode`, counting
+  nested rows too with `footer_inheritance`.
+- **Empty values:** an empty list or record draws a dimmed `empty list` or
+  `empty record` with `show_empty`, and nothing without it.
 - **Missing values:** a record in a list without one of the list's columns
   shows `$env.config.table.missing_value_symbol`, centered, in the `empty`
   color.
 - **Fitting:** when the table is wider than the screen:
-  - The widest text columns get an ellipsis. Number columns never shrink.
+  - The widest text columns get narrower. Their text wraps, between words
+    when `wrapping_try_keep_words` is on, or with `trim.methodology:
+    truncating`, is cut short and ends in `truncating_suffix`. Number
+    columns never shrink.
   - Each column's nested tables get the room the other columns leave.
   - A nested table shows its summary, such as `{record 39 fields}`, when it
     would get less room than about two dozen characters, or when fitting it
@@ -237,6 +244,6 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   whatever isn't an answer, so keys typed while `render` runs are lost.
 - **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
   so only the parser is tested.
-- **Not wired up:** `table`'s `--theme`, `--list` and `--collapse`; the
-  footer, wrapping and `show_empty` settings; and plugin config such as a
-  font family.
+- **Not wired up:** `table`'s `--theme`, `--list` and `--collapse`, the
+  `padding` and `header_on_separator` settings that go with them, and plugin
+  config such as a font family.

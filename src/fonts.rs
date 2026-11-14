@@ -388,6 +388,32 @@ impl Line {
             highlight.end = highlight.end.min(start);
         }
     }
+
+    /// Add `other` to the end of this line. A highlight that continues one
+    /// in the same color joins it, so a colored run stays one piece.
+    pub fn extend(&mut self, other: Line) {
+        let offset = self.width;
+        self.glyphs
+            .extend(other.glyphs.into_iter().map(|glyph| Glyph {
+                x: glyph.x + offset,
+                pen: glyph.pen + offset,
+                ..glyph
+            }));
+        for highlight in other.highlights {
+            let (start, end) = (highlight.start + offset, highlight.end + offset);
+            match self.highlights.last_mut() {
+                Some(last) if last.color == highlight.color && (last.end - start).abs() < 0.5 => {
+                    last.end = end;
+                }
+                _ => self.highlights.push(Highlight {
+                    start,
+                    end,
+                    color: highlight.color,
+                }),
+            }
+        }
+        self.width += other.width;
+    }
 }
 
 /// Whether `c` belongs with the character before it: joiners, variation

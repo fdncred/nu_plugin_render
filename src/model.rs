@@ -45,6 +45,45 @@ pub struct Grid {
     pub rows: Vec<Vec<Cell>>,
     /// One per column, not counting the index.
     pub align: Vec<Align>,
+    /// The header again below the last row, per `footer_mode`.
+    pub footer: bool,
+}
+
+impl Grid {
+    /// Its rows, and with `nested`, the rows of the tables inside it too.
+    pub fn count_rows(&self, nested: bool) -> usize {
+        let inner: usize = if nested {
+            self.rows
+                .iter()
+                .flatten()
+                .filter_map(|cell| match &cell.content {
+                    Content::Grid { grid, .. } => Some(grid.count_rows(true)),
+                    Content::Text(_) => None,
+                })
+                .sum()
+        } else {
+            0
+        };
+        self.rows.len() + inner
+    }
+
+    /// What `table` shows for an empty list or record, such as `empty list`,
+    /// when `show_empty` is on.
+    pub fn placeholder(text: String, theme: &Theme) -> Grid {
+        Grid {
+            header: None,
+            index: None,
+            rows: vec![vec![Cell {
+                content: Content::Text(text),
+                color: theme.muted,
+                bold: false,
+                background: None,
+                center: false,
+            }]],
+            align: vec![Align::Left],
+            footer: false,
+        }
+    }
 }
 
 /// Where cell styles come from: `color_config`, its closures, and
@@ -130,6 +169,7 @@ impl Builder<'_> {
                     index: None,
                     rows: vec![vec![self.cell(other, None, depth, false)]],
                     align: vec![kinds.align()],
+                    footer: false,
                 }
             }
         }
@@ -220,6 +260,7 @@ impl Builder<'_> {
             index,
             rows,
             align: kinds.into_iter().map(Kinds::align).collect(),
+            footer: false,
         }
     }
 
@@ -239,6 +280,7 @@ impl Builder<'_> {
             index: None,
             rows,
             align: vec![Align::Left, Align::Left],
+            footer: false,
         }
     }
 

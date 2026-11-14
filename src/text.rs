@@ -194,7 +194,7 @@ fn line_width(spans: &[ansi::Span]) -> u32 {
 
 /// Split text into what takes cells together: a character with the
 /// joiners, selectors, and marks that follow it.
-fn clusters(text: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn clusters(text: &str) -> impl Iterator<Item = &str> {
     let mut rest = text;
     std::iter::from_fn(move || {
         let mut chars = rest.char_indices();

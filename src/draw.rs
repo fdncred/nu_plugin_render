@@ -1,7 +1,7 @@
 //! From a grid or a string to PNG bands sized in whole terminal cells.
 
 use crate::fonts::{self, FacePair, Fonts, Rasterizer, Shaper};
-use crate::layout::{Block, Geometry, Layout};
+use crate::layout::{Block, Geometry, Layout, Trim};
 use crate::model::Grid;
 use crate::paint::{self, Canvas, Painter};
 use crate::style::Theme;
@@ -64,6 +64,7 @@ pub fn lay_out(
     faces: FacePair,
     theme: &Theme,
     screen: &Screen,
+    trim: Trim,
 ) -> Result<Drawing, String> {
     let cell = screen.cell_pixels();
     // A terminal's cell is about 1.2 times its font size tall.
@@ -76,6 +77,7 @@ pub fn lay_out(
         faces,
         geometry,
         theme,
+        trim,
     }
     .block(grid, max_width(screen));
     Ok(Drawing {

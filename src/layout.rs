@@ -2,9 +2,21 @@
 //! every line of text goes. Nothing here draws.
 
 use crate::ansi;
-use crate::fonts::{FacePair, Highlight, Line, Shaper};
+use crate::fonts::{FaceId, FacePair, Highlight, Line, Shaper};
 use crate::model::{Align, Cell, Content, Grid};
 use crate::style::{Rgba, Theme};
+use crate::text;
+
+/// What a column too narrow for its text does, from
+/// `$env.config.table.trim`.
+#[derive(Clone, Debug)]
+pub enum Trim {
+    /// Wrap onto more lines, between words when `keep_words`, and between
+    /// characters when a word alone is too wide.
+    Wrap { keep_words: bool },
+    /// Cut the text short and end it in `suffix`.
+    Truncate { suffix: String },
+}
 
 /// Sizes that follow from the font size, in pixels.
 #[derive(Clone, Copy, Debug)]
@@ -69,6 +81,8 @@ pub struct Block {
     pub rows: Vec<Row>,
     pub header: Vec<Placed>,
     pub cells: Vec<Vec<Placed>>,
+    /// The header again below the last row, `header_height` tall.
+    pub footer: bool,
     /// Fitting cut a column other than the last short, such as a record's
     /// keys. A nested table like that shows its summary instead.
     pub cramped: bool,
@@ -84,6 +98,27 @@ pub struct Layout<'s, 'f> {
     pub geometry: Geometry,
     /// For colors written into the text with ANSI escapes.
     pub theme: &'s Theme,
+    pub trim: Trim,
+}
+
+/// A run of a cell's text in one style, kept so the text can wrap again.
+#[derive(Clone)]
+struct Piece {
+    text: String,
+    bold: bool,
+    color: Option<Rgba>,
+    background: Option<Rgba>,
+}
+
+impl Piece {
+    fn plain(text: &str, bold: bool) -> Self {
+        Piece {
+            text: text.to_string(),
+            bold,
+            color: None,
+            background: None,
+        }
+    }
 }
 
 /// A cell before its column width is known.
@@ -100,6 +135,10 @@ struct Measured<'g> {
     /// For decimal alignment: the width up to the decimal point, per line.
     integer_widths: Vec<f32>,
     center: bool,
+    /// The text, line by line, for wrapping it again.
+    source: Vec<Vec<Piece>>,
+    /// The cell's own background, behind each whole line.
+    background: Option<Rgba>,
 }
 
 impl Measured<'_> {
@@ -117,6 +156,8 @@ impl Measured<'_> {
             color: Rgba([0; 4]),
             integer_widths: Vec::new(),
             center: false,
+            source: Vec::new(),
+            background: None,
         }
     }
 }
@@ -200,8 +241,16 @@ impl Layout<'_, '_> {
             .split_last()
             .is_some_and(|(_, before)| before.iter().any(|&cut| cut));
 
-        let ellipsis = self.shaper.line("…", self.faces.regular, false);
-        let bold_ellipsis = self.shaper.line("…", self.faces.bold, false);
+        let suffix = match &self.trim {
+            Trim::Truncate { suffix } => suffix.as_str(),
+            Trim::Wrap { .. } => "…",
+        };
+        let ellipsis = self.shaper.line(suffix, self.faces.regular, false);
+        let bold_ellipsis = self.shaper.line(suffix, self.faces.bold, false);
+        let keep_words = match self.trim {
+            Trim::Wrap { keep_words } => Some(keep_words),
+            Trim::Truncate { .. } => None,
+        };
 
         let mut columns = Vec::with_capacity(column_count);
         let mut x = 0.0;
@@ -267,7 +316,17 @@ impl Layout<'_, '_> {
         let mut rows = Vec::with_capacity(cells.len());
         let mut placed_cells = Vec::with_capacity(cells.len());
         let mut y = header_height;
-        for row in cells {
+        for mut row in cells {
+            // Text in a column fitting cut short wraps instead, when the
+            // config says so.
+            if let Some(keep_words) = keep_words {
+                for (column, cell) in row.iter_mut().enumerate() {
+                    if shrunk[column] && !cell.source.is_empty() && cell.width() > widths[column] {
+                        let lines = self.wrap(&cell.source, widths[column], keep_words);
+                        cell.lines = with_background(lines, cell.background);
+                    }
+                }
+            }
             let text_row = self.geometry.line_height + 2.0 * self.geometry.pad_y;
             let height = row
                 .iter()
@@ -291,6 +350,10 @@ impl Layout<'_, '_> {
             );
         }
 
+        let footer = grid.footer && header_height > 0.0;
+        if footer {
+            y += header_height;
+        }
         Block {
             width: x,
             height: y,
@@ -299,8 +362,78 @@ impl Layout<'_, '_> {
             rows,
             header,
             cells: placed_cells,
+            footer,
             cramped,
         }
+    }
+
+    /// Lay `source` out again in lines no wider than `width`.
+    fn wrap(&mut self, source: &[Vec<Piece>], width: f32, keep_words: bool) -> Vec<Line> {
+        let mut lines = Vec::new();
+        for pieces in source {
+            let mut line = Line::default();
+            // Spaces where a line wrapped are dropped, but not the indent a
+            // line starts with.
+            let mut wrapped = false;
+            for piece in pieces {
+                for token in tokens(&piece.text, keep_words) {
+                    let blank = token.trim().is_empty();
+                    if blank && wrapped {
+                        continue;
+                    }
+                    let shaped = self.piece(token, piece);
+                    if line.glyphs.is_empty() || line.width + shaped.width <= width {
+                        if shaped.width <= width || blank {
+                            line.extend(shaped);
+                            wrapped = false;
+                            continue;
+                        }
+                    } else {
+                        lines.push(std::mem::take(&mut line));
+                        wrapped = true;
+                        if blank {
+                            continue;
+                        }
+                        if shaped.width <= width {
+                            line.extend(shaped);
+                            wrapped = false;
+                            continue;
+                        }
+                    }
+                    // A word wider than the column breaks between characters.
+                    for cluster in text::clusters(token) {
+                        let shaped = self.piece(cluster, piece);
+                        if !line.glyphs.is_empty() && line.width + shaped.width > width {
+                            lines.push(std::mem::take(&mut line));
+                        }
+                        line.extend(shaped);
+                    }
+                    wrapped = false;
+                }
+            }
+            lines.push(line);
+        }
+        lines
+    }
+
+    /// One piece of text shaped in its style.
+    fn piece(&mut self, text: &str, piece: &Piece) -> Line {
+        let face: FaceId = if piece.bold {
+            self.faces.bold
+        } else {
+            self.faces.regular
+        };
+        let mut line = Line::default();
+        self.shaper
+            .append(&mut line, text, face, false, piece.color);
+        if let Some(color) = piece.background {
+            line.highlights.push(Highlight {
+                start: 0.0,
+                end: line.width,
+                color,
+            });
+        }
+        line
     }
 
     /// Lay out each column's nested tables within what the other columns
@@ -362,6 +495,7 @@ impl Layout<'_, '_> {
         cell.nested = None;
         if let Some(summary) = cell.summary {
             cell.lines = vec![self.shaper.line(summary, self.faces.regular, false)];
+            cell.source = vec![vec![Piece::plain(summary, false)]];
         }
     }
 
@@ -456,10 +590,12 @@ impl Layout<'_, '_> {
             Content::Text(text) if ansi::has_escapes(text) => {
                 // Text that styles itself: each span in its own color, and
                 // bold where it asks for it.
+                let mut source = Vec::new();
                 let lines = ansi::parse(text)
                     .iter()
                     .map(|spans| {
                         let mut line = Line::default();
+                        let mut pieces = Vec::with_capacity(spans.len());
                         for span in spans {
                             let colors = span.style.colors(self.theme, cell.color);
                             let face = if cell.bold || span.style.bold {
@@ -478,7 +614,14 @@ impl Layout<'_, '_> {
                                     color,
                                 });
                             }
+                            pieces.push(Piece {
+                                text,
+                                bold: cell.bold || span.style.bold,
+                                color: colors.fg,
+                                background: colors.bg,
+                            });
                         }
+                        source.push(pieces);
                         line
                     })
                     .collect();
@@ -486,11 +629,17 @@ impl Layout<'_, '_> {
                     lines: with_background(lines, cell.background),
                     color: cell.color,
                     center: cell.center,
+                    source,
+                    background: cell.background,
                     ..Measured::blank()
                 }
             }
             Content::Text(text) => {
                 let mut integer_widths = Vec::new();
+                let source = text
+                    .split('\n')
+                    .map(|line| vec![Piece::plain(line, cell.bold)])
+                    .collect();
                 let lines = text
                     .split('\n')
                     .map(|line| {
@@ -506,6 +655,8 @@ impl Layout<'_, '_> {
                     color: cell.color,
                     integer_widths,
                     center: cell.center,
+                    source,
+                    background: cell.background,
                     ..Measured::blank()
                 }
             }
@@ -517,6 +668,29 @@ impl Layout<'_, '_> {
             },
         }
     }
+}
+
+/// Where text may break: words and the spaces between them, or with
+/// `keep_words` off, every character.
+fn tokens(text: &str, keep_words: bool) -> Vec<&str> {
+    if !keep_words {
+        return text::clusters(text).collect();
+    }
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    let mut blank = None;
+    for (at, c) in text.char_indices() {
+        let is_blank = c.is_whitespace();
+        if blank.is_some_and(|was| was != is_blank) {
+            tokens.push(&text[start..at]);
+            start = at;
+        }
+        blank = Some(is_blank);
+    }
+    if start < text.len() {
+        tokens.push(&text[start..]);
+    }
+    tokens
 }
 
 /// Put a cell's background behind the whole of each of its lines.
@@ -534,4 +708,16 @@ fn with_background(mut lines: Vec<Line>, background: Option<Rgba>) -> Vec<Line> 
         }
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_split_words_from_spaces() {
+        assert_eq!(tokens("a  bc d", true), ["a", "  ", "bc", " ", "d"]);
+        assert_eq!(tokens("  indented", true), ["  ", "indented"]);
+        assert_eq!(tokens("ab c", false), ["a", "b", " ", "c"]);
+    }
 }
