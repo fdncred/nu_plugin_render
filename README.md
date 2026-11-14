@@ -278,6 +278,7 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   are lost. Later calls reuse its answers, so they lose nothing. After
   changing the terminal's font size, `plugin stop render` makes it probe
   again.
-- **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
-  so only the parser is tested.
+- **Light theme:** checked in images drawn with it, but not yet on a
+  terminal with a light background. Rex doesn't answer OSC 11, so it always
+  gets the dark theme.
 - **Not wired up:** plugin config, such as a font family.

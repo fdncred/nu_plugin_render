@@ -35,9 +35,11 @@ impl Sgr {
     /// This style's colors on `theme`'s card, with reverse and dim applied.
     pub fn colors(&self, theme: &Theme, default_fg: Rgba) -> Colors {
         let fg = self.fg.map(|color| match (color, self.bg) {
-            // Black is softened to show on a dark card, but over a
-            // background of its own it should stay black.
+            // Black and white are softened to show on the card, black on a
+            // dark one and white on a light one, but over a background of
+            // their own they stay black and white.
             (Color::Black, Some(_)) => Rgba::rgb(0x11, 0x11, 0x1b),
+            (Color::White | Color::LightGray, Some(_)) => Rgba::rgb(0xf8, 0xf8, 0xf8),
             _ => theme.color(color, default_fg),
         });
         let bg = self.bg.map(|color| theme.color(color, theme.card));
@@ -242,5 +244,16 @@ mod tests {
         assert_eq!(lines[0][0].style.fg, Some(Color::Fixed(208)));
         assert_eq!(lines[0][0].style.bg, Some(Color::LightRed));
         assert_eq!(lines[0][1].style, Sgr::default());
+    }
+
+    #[test]
+    fn black_and_white_stay_themselves_over_a_background() {
+        let theme = Theme::light();
+        let lines = parse("\x1b[37;44mx\x1b[30;43my\x1b[37;49mz");
+        let colors = |at: usize| lines[0][at].style.colors(&theme, theme.text).fg;
+        assert_eq!(colors(0), Some(Rgba::rgb(0xf8, 0xf8, 0xf8)));
+        assert_eq!(colors(1), Some(Rgba::rgb(0x11, 0x11, 0x1b)));
+        // On the card itself, white is the theme's, readable on a light card.
+        assert_eq!(colors(2), Some(theme.ansi[7]));
     }
 }
