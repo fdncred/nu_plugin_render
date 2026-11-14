@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 arboard = { version = "3.7.0", default-features = false, features = ["image-data", "wayland-data-control"] }
 base64 = "0.23.1"
+devicons = "0.6.13"
 fontdb = "0.24.0"
 lscolors = "0.21.0"
 nu-ansi-term = "0.50.3"

@@ -99,6 +99,7 @@ struct Measured<'g> {
     color: Rgba,
     /// For decimal alignment: the width up to the decimal point, per line.
     integer_widths: Vec<f32>,
+    center: bool,
 }
 
 impl Measured<'_> {
@@ -115,6 +116,7 @@ impl Measured<'_> {
             summary: None,
             color: Rgba([0; 4]),
             integer_widths: Vec::new(),
+            center: false,
         }
     }
 }
@@ -227,6 +229,7 @@ impl Layout<'_, '_> {
                         line.truncate(width, ellipsis);
                     }
                     let dx = match align[column] {
+                        _ if cell.center => (width - line.width) / 2.0,
                         Align::Left => 0.0,
                         Align::Right => width - line.width,
                         Align::Decimal => integers[column] - integer,
@@ -482,6 +485,7 @@ impl Layout<'_, '_> {
                 Measured {
                     lines: with_background(lines, cell.background),
                     color: cell.color,
+                    center: cell.center,
                     ..Measured::blank()
                 }
             }
@@ -501,6 +505,7 @@ impl Layout<'_, '_> {
                     lines: with_background(lines, cell.background),
                     color: cell.color,
                     integer_widths,
+                    center: cell.center,
                     ..Measured::blank()
                 }
             }

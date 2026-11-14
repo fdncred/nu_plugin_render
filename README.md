@@ -9,7 +9,7 @@ of `grid` keeps its layout. When the terminal can't show kitty graphics,
 
 ```nu
 ls | render
-open data.json | render
+open data.json | render -e         # nested lists and records as nested cards
 ls | grid -c -i name | render      # text that lines itself up stays lined up
 ls | render --png | save ls.png   # the picture, without a terminal
 ls | render --copy                # the picture, on the clipboard
@@ -31,9 +31,23 @@ Built against `nu-plugin` 0.117.0, which loads in Nushell 0.117.x.
 | Flag | What it does |
 | --- | --- |
 | `--png` | Return the whole drawing as PNG bytes instead of drawing it, cut to the card. It is painted and encoded a band at a time, so a tall table needs no more memory than one band. |
-| `--copy`, `-c` | Copy the drawing to the clipboard as an image, cut to the card, instead of drawing it. With `--png` too, it also returns the PNG. |
+| `--copy` | Copy the drawing to the clipboard as an image, cut to the card, instead of drawing it. With `--png` too, it also returns the PNG. |
 | `--mono` | Draw a table in a monospace font instead of a sans-serif one. Strings always draw in monospace. |
 | `--width`, `-w` | The widest the drawing may be, in terminal columns. Defaults to the terminal's width, or 160 with `--png` or `--copy`. |
+
+These work as they do in `table`:
+
+| Flag | What it does |
+| --- | --- |
+| `--expand`, `-e` | Nested lists and records draw as nested cards, however deep. Without it they show as summaries, such as `[table 3 rows]`. |
+| `--expand-deep`, `-d` | How many levels `--expand` nests; deeper ones show their summary. |
+| `--flatten` | With `--expand`, a list of plain values in a table's row shows as one line. A record's values don't flatten. |
+| `--flatten-separator` | What `--flatten` joins with. Defaults to a space. |
+| `--index`, `-i` | `false` hides the `#` column, `true` shows it, and a number starts it there. Nested tables count from 0. |
+| `--abbreviated`, `-a` | Only this many rows at the top and bottom, with a `...` row between. Defaults to `$env.config.table.abbreviated_row_count`. |
+| `--icons`, `-o` | A file icon before each path that `LS_COLORS` styles, from devicons, as `table --icons` draws it. |
+
+When `render` falls back to `table`, it passes these and `--width` along.
 
 Set `NU_PLUGIN_RENDER_DEBUG=1` in the environment Nushell starts with to see,
 on stderr, why `render` fell back to `table`, or how long each phase took.
@@ -54,8 +68,11 @@ on stderr, why `render` fell back to `table`, or how long each phase took.
   bold, and backgrounds.
 - **Numbers:** right-aligned with tabular digits. Columns of floats line up
   on the decimal point, at `float_precision`.
-- **Nested values:** lists and records nest as smaller cards, up to four
-  levels deep.
+- **Nested values:** with `--expand`, lists and records nest as smaller
+  cards.
+- **Missing values:** a record in a list without one of the list's columns
+  shows `$env.config.table.missing_value_symbol`, centered, in the `empty`
+  color.
 - **Fitting:** when the table is wider than the screen:
   - The widest text columns get an ellipsis. Number columns never shrink.
   - Each column's nested tables get the room the other columns leave.
@@ -122,8 +139,9 @@ Details:
   on cell rows, so they join without seams, and are painted on every core,
   each thread with its own glyph cache.
 - **Why 40 rows:** every image costs the terminal time, so fewer, taller
-  bands show sooner. In Rex, `$env` at 143 columns took 141 ms to show in
-  22-row bands, 240 ms in 4-row bands, and 318 ms in 1-row bands.
+  bands show sooner. In Rex, `$env | render -e` at 143 columns took 141 ms
+  to show in 22-row bands, 240 ms in 4-row bands, and 318 ms in 1-row
+  bands.
 - **Temporary files** that no terminal read, from output that never reached
   one (such as `render | ignore`), are deleted on the next call once they're
   a minute old.
@@ -188,14 +206,15 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   back to `table`.
 - **Windows:** there is no terminal probe yet, so it always falls back.
 - **tmux, zellij:** no passthrough, so they fall back.
-- **Rex:** the top of a tall drawing stays blank. `$env` at 148 columns
-  loses about 60% of its height. Rex keeps 128 MiB of image data and drops
-  the oldest images first, but that accounts for only a tenth of it; the
-  cause of the rest isn't known. Ghostty shows the same output whole.
-- **Speed:** `$env` at 143 columns (142 × 461 cells, about 34 million
-  pixels) takes about 130 ms in the plugin, and Rex then takes about 230 ms
-  to show it. `table -e` takes about 20 ms. Of the plugin's time, about
-  57 ms is drawing:
+- **Rex:** the top of a tall drawing stays blank. `$env | render -e` at 148
+  columns loses about 60% of its height. Rex keeps 128 MiB of image data
+  and drops the oldest images first, but that accounts for only a tenth of
+  it; the cause of the rest isn't known. Ghostty shows the same output
+  whole.
+- **Speed:** `$env | render -e` at 143 columns (142 × 461 cells, about 34
+  million pixels) takes about 130 ms in the plugin, and Rex then takes
+  about 230 ms to show it. `table -e` takes about 20 ms. Of the plugin's
+  time, about 57 ms is drawing:
   - probe 12 ms
   - model 10 ms
   - layout 4 ms
@@ -218,6 +237,6 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   whatever isn't an answer, so keys typed while `render` runs are lost.
 - **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
   so only the parser is tested.
-- **Not wired up:** `table`'s `--theme`, `--abbreviated`, `--collapse`,
-  `--index`, `--expand` depth, `--icons`, the footer, and plugin config such
-  as a font family.
+- **Not wired up:** `table`'s `--theme`, `--list` and `--collapse`; the
+  footer, wrapping and `show_empty` settings; and plugin config such as a
+  font family.

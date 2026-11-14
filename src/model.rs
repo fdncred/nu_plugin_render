@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use nu_ansi_term::{Color, Style};
-use nu_protocol::{Config, Record, TableIndexMode, Value};
+use nu_protocol::{Config, Record, Span, TableIndexMode, Value};
 
 use crate::style::{Rgba, Theme};
 
@@ -23,6 +23,9 @@ pub struct Cell {
     pub bold: bool,
     /// A color behind the text, such as `LS_COLORS` gives some files.
     pub background: Option<Rgba>,
+    /// Centered in its column whatever the column's alignment, as `table`
+    /// centers `missing_value_symbol`.
+    pub center: bool,
 }
 
 pub enum Content {
@@ -53,6 +56,9 @@ pub trait Styles {
     fn named(&self, key: &str) -> Style;
     /// The `LS_COLORS` style for `text` in `column`, when it is a path column.
     fn path(&mut self, column: &str, text: &str) -> Option<Style>;
+    /// `--icons`: the icon for the file or directory at `path`, and its
+    /// color.
+    fn icon(&self, path: &str) -> (char, Style);
 }
 
 /// Turns values into grids.
@@ -60,8 +66,19 @@ pub struct Builder<'a> {
     pub config: &'a Config,
     pub theme: &'a Theme,
     pub styles: &'a mut dyn Styles,
-    /// Nested lists and records deeper than this show as `[table 3 rows]`.
+    /// How many levels of lists and records nest as tables below the top
+    /// one. With 0 they show as summaries such as `[table 3 rows]`, as
+    /// `table` shows them; with `usize::MAX` they all nest, as with
+    /// `table --expand`.
     pub max_depth: usize,
+    /// `--flatten`: in a table's rows, a list of plain values shows as one
+    /// line, joined with this separator.
+    pub flatten: Option<&'a str>,
+    /// `--index`: where row numbers start, or `None` to hide the index
+    /// column, as `--index false` does.
+    pub index: Option<usize>,
+    /// `--icons`: a file icon before each path that `LS_COLORS` styles.
+    pub icons: bool,
 }
 
 /// Counts of a column's value kinds, to pick its alignment.
@@ -111,7 +128,7 @@ impl Builder<'_> {
                 Grid {
                     header: None,
                     index: None,
-                    rows: vec![vec![self.cell(other, None, depth)]],
+                    rows: vec![vec![self.cell(other, None, depth, false)]],
                     align: vec![kinds.align()],
                 }
             }
@@ -147,14 +164,14 @@ impl Builder<'_> {
                     .map(|(column, kind)| match val.get(column) {
                         Some(cell) => {
                             kind.add(cell);
-                            self.cell(cell, Some(column), depth)
+                            self.cell(cell, Some(column), depth, true)
                         }
-                        None => self.empty(),
+                        None => self.missing(),
                     })
                     .collect(),
                 other => {
                     kinds[0].add(other);
-                    let mut row = vec![self.cell(other, None, depth)];
+                    let mut row = vec![self.cell(other, None, depth, true)];
                     row.resize_with(width, || self.empty());
                     row
                 }
@@ -162,10 +179,17 @@ impl Builder<'_> {
             rows.push(row);
         }
 
-        let show_index = match self.config.table.index_mode {
-            TableIndexMode::Always => true,
-            TableIndexMode::Never => false,
-            TableIndexMode::Auto => has_index_column,
+        let show_index = self.index.is_some()
+            && match self.config.table.index_mode {
+                TableIndexMode::Always => true,
+                TableIndexMode::Never => false,
+                TableIndexMode::Auto => has_index_column,
+            };
+        // Nested tables count from 0, as in `table`.
+        let offset = if depth == 0 {
+            self.index.unwrap_or(0)
+        } else {
+            0
         };
         let index = show_index.then(|| {
             vals.iter()
@@ -174,10 +198,10 @@ impl Builder<'_> {
                     let text = match value {
                         Value::Record { val, .. } => val
                             .get("index")
-                            .map(|index| index.to_abbreviated_string(self.config)),
+                            .map(|index| index.to_expanded_string("", self.config)),
                         _ => None,
                     }
-                    .unwrap_or_else(|| row.to_string());
+                    .unwrap_or_else(|| (row + offset).to_string());
                     self.index_cell(text)
                 })
                 .collect()
@@ -203,7 +227,12 @@ impl Builder<'_> {
     fn record(&mut self, record: &Record, depth: usize) -> Grid {
         let rows = record
             .iter()
-            .map(|(key, value)| vec![self.header_cell(key), self.cell(value, Some(key), depth)])
+            .map(|(key, value)| {
+                vec![
+                    self.header_cell(key),
+                    self.cell(value, Some(key), depth, false),
+                ]
+            })
             .collect();
         Grid {
             header: None,
@@ -214,13 +243,30 @@ impl Builder<'_> {
     }
 
     /// One value's cell. Lists and records nest as grids until `max_depth`.
-    fn cell(&mut self, value: &Value, column: Option<&str>, depth: usize) -> Cell {
+    /// A `list_item` is a cell in a list's rows, not a record's value; only
+    /// those flatten, as in `table`.
+    fn cell(&mut self, value: &Value, column: Option<&str>, depth: usize, list_item: bool) -> Cell {
         let nested = match value {
             Value::List { vals, .. } => !vals.is_empty(),
             Value::Record { val, .. } => !val.is_empty(),
             _ => false,
         };
         if nested && depth < self.max_depth {
+            if list_item
+                && let (Some(separator), Value::List { vals, .. }) = (self.flatten, value)
+                && vals
+                    .iter()
+                    .all(|val| !matches!(val, Value::Record { .. } | Value::List { .. }))
+            {
+                let text: Vec<String> = vals.iter().map(|val| self.text(val)).collect();
+                return Cell {
+                    content: Content::Text(text.join(separator)),
+                    color: self.theme.text,
+                    bold: false,
+                    background: None,
+                    center: false,
+                };
+            }
             return Cell {
                 content: Content::Grid {
                     grid: Box::new(self.grid(value, depth + 1)),
@@ -229,30 +275,64 @@ impl Builder<'_> {
                 color: self.theme.text,
                 bold: false,
                 background: None,
+                center: false,
             };
         }
 
-        let text = match value {
+        let mut text = self.text(value).replace('\t', "    ");
+        let path_style = column.and_then(|column| match value {
+            Value::String { val, .. } => self.styles.path(column, val),
+            _ => None,
+        });
+        let style = path_style.unwrap_or_else(|| self.styles.value(type_key(value), value));
+        let mut background = style
+            .background
+            .filter(|color| *color != Color::Default)
+            .map(|color| self.theme.color(color, self.theme.card));
+        // As `table --icons`: the icon in its own color, two spaces, then the
+        // name in its style, so a background stays behind the name alone.
+        if self.icons
+            && let Some(style) = path_style
+            && let Value::String { val, .. } = value
+        {
+            let (icon, icon_style) = self.styles.icon(val);
+            text = format!(
+                "{}  {}",
+                icon_style.paint(icon.to_string()),
+                style.paint(&text)
+            );
+            background = None;
+        }
+        Cell {
+            content: Content::Text(text),
+            color: self.theme.foreground(&style, self.theme.text),
+            bold: style.is_bold,
+            background,
+            center: false,
+        }
+    }
+
+    /// A plain value's text: floats at `float_precision`, nothing empty.
+    fn text(&self, value: &Value) -> String {
+        match value {
             Value::Float { val, .. } if self.config.float_precision >= 0 => {
                 format!("{val:.*}", self.config.float_precision as usize)
             }
             Value::Nothing { .. } => String::new(),
             _ => value.to_abbreviated_string(self.config),
-        };
-        let style = column
-            .and_then(|column| match value {
-                Value::String { val, .. } => self.styles.path(column, val),
-                _ => None,
-            })
-            .unwrap_or_else(|| self.styles.value(type_key(value), value));
+        }
+    }
+
+    /// A record in a list that lacks one of the list's columns: the
+    /// `missing_value_symbol`, centered, in the `empty` color.
+    fn missing(&mut self) -> Cell {
+        let style = self.styles.value("empty", &Value::nothing(Span::unknown()));
         Cell {
-            content: Content::Text(text.replace('\t', "    ")),
+            content: Content::Text(self.config.table.missing_value_symbol.clone()),
             color: self.theme.foreground(&style, self.theme.text),
             bold: style.is_bold,
-            background: style
-                .background
-                .filter(|color| *color != Color::Default)
-                .map(|color| self.theme.color(color, self.theme.card)),
+            background: None,
+            center: true,
         }
     }
 
@@ -263,6 +343,7 @@ impl Builder<'_> {
             color: self.theme.foreground(&style, self.theme.text),
             bold: true,
             background: None,
+            center: false,
         }
     }
 
@@ -273,6 +354,7 @@ impl Builder<'_> {
             color: self.theme.foreground(&style, self.theme.muted),
             bold: false,
             background: None,
+            center: false,
         }
     }
 
@@ -282,6 +364,7 @@ impl Builder<'_> {
             color: self.theme.muted,
             bold: false,
             background: None,
+            center: false,
         }
     }
 }
@@ -306,5 +389,97 @@ fn type_key(value: &Value) -> &'static str {
         Value::CellPath { .. } => "cell-path",
         Value::Error { .. } => "error",
         Value::Custom { .. } => "custom",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nu_protocol::record;
+
+    use super::*;
+
+    /// No colors from anywhere.
+    struct Plain;
+
+    impl Styles for Plain {
+        fn value(&mut self, _: &str, _: &Value) -> Style {
+            Style::default()
+        }
+        fn named(&self, _: &str) -> Style {
+            Style::default()
+        }
+        fn path(&mut self, _: &str, _: &str) -> Option<Style> {
+            None
+        }
+        fn icon(&self, _: &str) -> (char, Style) {
+            ('x', Style::default())
+        }
+    }
+
+    fn build(value: &Value, max_depth: usize, flatten: Option<&str>, index: Option<usize>) -> Grid {
+        let config = Config::default();
+        let theme = Theme::dark();
+        Builder {
+            config: &config,
+            theme: &theme,
+            styles: &mut Plain,
+            max_depth,
+            flatten,
+            index,
+            icons: false,
+        }
+        .grid(value, 0)
+    }
+
+    fn text(cell: &Cell) -> &str {
+        match &cell.content {
+            Content::Text(text) => text,
+            Content::Grid { .. } => panic!("expected text, found a nested table"),
+        }
+    }
+
+    fn rows() -> Value {
+        Value::test_list(vec![
+            Value::test_record(record! {
+                "a" => Value::test_int(1),
+                "b" => Value::test_list(vec![Value::test_int(1), Value::test_int(2)]),
+            }),
+            Value::test_record(record! { "a" => Value::test_int(2) }),
+        ])
+    }
+
+    #[test]
+    fn nested_values_show_summaries_unless_expanded() {
+        let grid = build(&rows(), 0, None, Some(0));
+        assert_eq!(text(&grid.rows[0][1]), "[list 2 items]");
+        let grid = build(&rows(), usize::MAX, None, Some(0));
+        assert!(matches!(grid.rows[0][1].content, Content::Grid { .. }));
+    }
+
+    #[test]
+    fn missing_columns_show_the_symbol_centered() {
+        let grid = build(&rows(), 0, None, Some(0));
+        let missing = &grid.rows[1][1];
+        assert_eq!(text(missing), Config::default().table.missing_value_symbol);
+        assert!(missing.center);
+    }
+
+    #[test]
+    fn flatten_joins_plain_lists_in_rows_only() {
+        let grid = build(&rows(), usize::MAX, Some(", "), Some(0));
+        assert_eq!(text(&grid.rows[0][1]), "1, 2");
+        let record = Value::test_record(record! {
+            "b" => Value::test_list(vec![Value::test_int(1), Value::test_int(2)]),
+        });
+        let grid = build(&record, usize::MAX, Some(", "), Some(0));
+        assert!(matches!(grid.rows[0][1].content, Content::Grid { .. }));
+    }
+
+    #[test]
+    fn index_counts_from_the_flag_or_hides() {
+        let grid = build(&rows(), 0, None, Some(100));
+        let index: Vec<&str> = grid.index.iter().flatten().map(text).collect();
+        assert_eq!(index, ["100", "101"]);
+        assert!(build(&rows(), 0, None, None).index.is_none());
     }
 }

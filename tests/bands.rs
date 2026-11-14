@@ -12,6 +12,7 @@ fn text(theme: &Theme, text: &str) -> Cell {
         color: theme.text,
         bold: false,
         background: None,
+        center: false,
     }
 }
 
@@ -37,6 +38,7 @@ fn nested(theme: &Theme) -> Cell {
         color: theme.text,
         bold: false,
         background: None,
+        center: false,
     }
 }
 

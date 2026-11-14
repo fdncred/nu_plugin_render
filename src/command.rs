@@ -11,7 +11,7 @@ use nu_color_config::{color_record_to_nustyle, lookup_ansi_color_style};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::engine::Closure;
 use nu_protocol::{
-    Category, Config, IntoPipelineData as _, LabeledError, PipelineData, PipelineMetadata,
+    Category, Config, IntoPipelineData as _, LabeledError, PipelineData, PipelineMetadata, Record,
     Signature, Spanned, SyntaxShape, Type, Value,
 };
 
@@ -23,12 +23,10 @@ use crate::model::{Builder, Styles};
 use crate::style::Theme;
 use crate::term;
 
-/// Nested lists and records deeper than this show as a summary.
-const MAX_DEPTH: usize = 4;
-
 /// Cell rows per image band. Every image costs the terminal time, so fewer,
-/// taller bands show sooner: in Rex, `$env` at 143 columns took 141 ms to
-/// show in 22-row bands, 240 ms in 4-row bands, and 318 ms in 1-row bands.
+/// taller bands show sooner: in Rex, `$env | render -e` at 143 columns took
+/// 141 ms to show in 22-row bands, 240 ms in 4-row bands, and 318 ms in
+/// 1-row bands.
 const BAND_ROWS: u32 = 40;
 
 pub struct Render;
@@ -59,7 +57,7 @@ impl PluginCommand for Render {
             .switch(
                 "copy",
                 "Copy the drawing to the clipboard as an image instead of drawing it.",
-                Some('c'),
+                None,
             )
             .switch("mono", "Draw a table in a monospace font.", None)
             .named(
@@ -68,6 +66,37 @@ impl PluginCommand for Render {
                 "The widest the drawing may be, in terminal columns. Defaults to the terminal's width, or 160 with --png or --copy.",
                 Some('w'),
             )
+            .named(
+                "index",
+                SyntaxShape::Any,
+                "Enable (true) or disable (false) the #/index column or set the starting index.",
+                Some('i'),
+            )
+            .switch(
+                "expand",
+                "Expand the table structure: nested lists and records draw as tables.",
+                Some('e'),
+            )
+            .named(
+                "expand-deep",
+                SyntaxShape::Int,
+                "How many levels of nesting to expand, with --expand.",
+                Some('d'),
+            )
+            .switch("flatten", "Flatten simple arrays, with --expand.", None)
+            .named(
+                "flatten-separator",
+                SyntaxShape::String,
+                "Sets a separator when 'flatten' is used.",
+                None,
+            )
+            .named(
+                "abbreviated",
+                SyntaxShape::Int,
+                "Abbreviate the data in the table by truncating the middle part and only showing amount provided on top and bottom.",
+                Some('a'),
+            )
+            .switch("icons", "Add icons to file paths in tables.", Some('o'))
             .category(Category::Viewers)
     }
 
@@ -92,6 +121,13 @@ impl PluginCommand for Render {
             }
             None => None,
         };
+        let index = index_flag(call)?;
+        let expand = call.has_flag("expand")?;
+        let expand_deep: Option<usize> = call.get_flag("expand-deep")?;
+        let flatten = call.has_flag("flatten")?;
+        let flatten_separator: Option<String> = call.get_flag("flatten-separator")?;
+        let abbreviated: Option<usize> = call.get_flag("abbreviated")?;
+        let icons = call.has_flag("icons")?;
         let metadata = input.metadata_ref().cloned();
         let value = input.into_value(head)?;
         let mut timer = Timer::new();
@@ -138,14 +174,24 @@ impl PluginCommand for Render {
             }
             _ => {
                 let config = engine.get_config()?;
+                let abbreviated = abbreviated
+                    .or(config.table.abbreviated_row_count)
+                    .and_then(|keep| abbreviate(&value, keep));
                 let mut styles = EngineStyles::new(engine, &config, metadata.as_ref());
                 let grid = Builder {
                     config: &config,
                     theme: &theme,
                     styles: &mut styles,
-                    max_depth: MAX_DEPTH,
+                    max_depth: match (expand, expand_deep) {
+                        (false, _) => 0,
+                        (true, deep) => deep.unwrap_or(usize::MAX),
+                    },
+                    flatten: (expand && flatten)
+                        .then(|| flatten_separator.as_deref().unwrap_or(" ")),
+                    index,
+                    icons,
                 }
-                .grid(&value, 0);
+                .grid(abbreviated.as_ref().unwrap_or(&value), 0);
                 timer.lap("model");
                 let faces = if mono { fonts.mono } else { fonts.sans };
                 draw::lay_out(&grid, &fonts, faces, &theme, &screen)
@@ -299,7 +345,78 @@ fn run_display_hook(
     }
 }
 
-/// Hand the value to `table`, for terminals that can't show images.
+/// `--index` as `table` reads it: true, or no flag, counts rows from 0; a
+/// number counts from there; false hides the index column.
+fn index_flag(call: &EvaluatedCall) -> Result<Option<usize>, LabeledError> {
+    match call.get_flag_value("index") {
+        None | Some(Value::Nothing { .. }) => Ok(Some(0)),
+        Some(Value::Bool { val, .. }) => Ok(val.then_some(0)),
+        Some(value @ Value::Int { val, .. }) => usize::try_from(val).map(Some).map_err(|_| {
+            LabeledError::new("`--index` can't be negative")
+                .with_label("a negative number", value.span())
+        }),
+        Some(value) => Err(LabeledError::new("`--index` takes a bool or a number")
+            .with_label(format!("found {}", value.get_type()), value.span())),
+    }
+}
+
+/// `--abbreviated` as `table` does it: the first and last `keep` rows of a
+/// list, or fields of a record, with a `...` row between. `None` when
+/// nothing changes.
+fn abbreviate(value: &Value, keep: usize) -> Option<Value> {
+    let span = value.span();
+    let dots = || Value::string("...", span);
+    match value {
+        Value::List { vals, .. } if keep == 0 => Some(Value::list(Vec::new(), span)),
+        Value::List { vals, .. } if vals.len() >= keep.saturating_mul(2) => {
+            let head = &vals[..keep];
+            let tail = &vals[vals.len() - keep..];
+            let all_records = head
+                .iter()
+                .chain(tail)
+                .all(|val| matches!(val, Value::Record { .. }));
+            // A list of records gets `...` in every column.
+            let dummy = match head.first() {
+                Some(Value::Record { val, .. }) if all_records => Value::record(
+                    val.columns().map(|key| (key.clone(), dots())).collect(),
+                    span,
+                ),
+                _ => dots(),
+            };
+            let mut vals = head.to_vec();
+            vals.push(dummy);
+            vals.extend_from_slice(tail);
+            Some(Value::list(vals, span))
+        }
+        Value::Record { val, .. } if val.len() > keep.saturating_mul(2).saturating_add(1) => {
+            let mut record = Record::with_capacity(keep * 2 + 1);
+            for (key, val) in val.iter().take(keep) {
+                record.push(key.clone(), val.clone());
+            }
+            record.push("...", dots());
+            for (key, val) in val.iter().skip(val.len() - keep) {
+                record.push(key.clone(), val.clone());
+            }
+            Some(Value::record(record, span))
+        }
+        _ => None,
+    }
+}
+
+/// The flags `render` shares with `table`, passed on when it falls back.
+const TABLE_FLAGS: &[&str] = &[
+    "width",
+    "index",
+    "expand",
+    "expand-deep",
+    "flatten",
+    "flatten-separator",
+    "abbreviated",
+    "icons",
+];
+
+/// Hand the value to `table`, with the flags they share, for terminals that
+/// can't show images.
 fn fallback(
     engine: &EngineInterface,
     call: &EvaluatedCall,
@@ -309,9 +426,16 @@ fn fallback(
     let table = engine
         .find_decl("table")?
         .ok_or_else(|| LabeledError::new("`table` isn't available to fall back on"))?;
+    let mut table_call = EvaluatedCall::new(call.head);
+    table_call.named = call
+        .named
+        .iter()
+        .filter(|(name, _)| TABLE_FLAGS.contains(&name.item.as_str()))
+        .cloned()
+        .collect();
     Ok(engine.call_decl(
         table,
-        EvaluatedCall::new(call.head),
+        table_call,
         PipelineData::value(value, metadata),
         true,
         false,
@@ -481,5 +605,63 @@ impl Styles for EngineStyles<'_> {
                 .map(lscolors::Style::to_nu_ansi_term_style)
                 .unwrap_or_default(),
         )
+    }
+
+    fn icon(&self, path: &str) -> (char, Style) {
+        // The full path, since devicons looks at the file to tell a
+        // directory, and this process doesn't share nushell's directory.
+        let icon = devicons::icon_for_file(&self.cwd.join(path), &None);
+        (icon.icon, lookup_ansi_color_style(icon.color))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nu_protocol::record;
+
+    use super::*;
+
+    fn ints(range: std::ops::Range<i64>) -> Value {
+        Value::test_list(range.map(Value::test_int).collect())
+    }
+
+    #[test]
+    fn abbreviates_lists_like_table() {
+        let dots = Value::test_string("...");
+        let expected = Value::test_list(vec![
+            Value::test_int(0),
+            Value::test_int(1),
+            dots.clone(),
+            Value::test_int(8),
+            Value::test_int(9),
+        ]);
+        assert_eq!(abbreviate(&ints(0..10), 2), Some(expected));
+        // `table` adds the `...` row once the list fills both ends.
+        assert_eq!(
+            abbreviate(&ints(0..4), 2).map(|list| list.as_list().map(<[Value]>::len).ok()),
+            Some(Some(5))
+        );
+        assert_eq!(abbreviate(&ints(0..3), 2), None);
+        assert_eq!(
+            abbreviate(&ints(0..3), 0),
+            Some(Value::test_list(Vec::new()))
+        );
+    }
+
+    #[test]
+    fn abbreviates_records_like_table() {
+        let record = Value::test_record(record! {
+            "a" => Value::test_int(1),
+            "b" => Value::test_int(2),
+            "c" => Value::test_int(3),
+            "d" => Value::test_int(4),
+        });
+        let expected = Value::test_record(record! {
+            "a" => Value::test_int(1),
+            "..." => Value::test_string("..."),
+            "d" => Value::test_int(4),
+        });
+        assert_eq!(abbreviate(&record, 1), Some(expected));
+        assert_eq!(abbreviate(&record, 2), None);
     }
 }
