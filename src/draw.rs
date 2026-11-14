@@ -1,7 +1,7 @@
 //! From a grid or a string to PNG bands sized in whole terminal cells.
 
 use crate::fonts::{self, FacePair, Fonts, Rasterizer, Shaper};
-use crate::layout::{Block, Geometry, Layout, Trim};
+use crate::layout::{Block, Geometry, Layout, Settings};
 use crate::model::Grid;
 use crate::paint::{self, Canvas, Painter};
 use crate::style::Theme;
@@ -64,20 +64,27 @@ pub fn lay_out(
     faces: FacePair,
     theme: &Theme,
     screen: &Screen,
-    trim: Trim,
+    settings: Settings,
 ) -> Result<Drawing, String> {
     let cell = screen.cell_pixels();
     // A terminal's cell is about 1.2 times its font size tall.
     let px = (cell.1 as f32 * 0.8).round();
     let metrics = fonts::metrics(fonts, faces.regular, px).ok_or("the font has no metrics")?;
-    let geometry = Geometry::new(px, metrics);
+    let mut geometry = Geometry::new(px, metrics);
+    // A padding character is the card look's spacing, about 0.6 em.
+    geometry.pad_left = (settings.padding.0 as f32 * px * 0.6).round();
+    geometry.pad_right = (settings.padding.1 as f32 * px * 0.6).round();
+    if settings.border.is_some() {
+        // A nested table's frame needs room from the lines around it.
+        geometry.inset = geometry.pad_y;
+    }
     let mut shaper = Shaper::new(fonts, px);
     let block = Layout {
         shaper: &mut shaper,
         faces,
         geometry,
         theme,
-        trim,
+        settings,
     }
     .block(grid, max_width(screen));
     Ok(Drawing {

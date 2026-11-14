@@ -9,6 +9,7 @@
 //! escape codes.
 
 pub mod ansi;
+pub mod border;
 mod command;
 pub mod draw;
 pub mod fonts;

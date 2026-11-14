@@ -16,10 +16,11 @@ use nu_protocol::{
 };
 
 use crate::RenderPlugin;
+use crate::border::Border;
 use crate::draw::{self, Screen};
 use crate::fonts::Rasterizer;
 use crate::kitty;
-use crate::layout::Trim;
+use crate::layout::{Settings, Trim};
 use crate::model::{Builder, Grid, Styles};
 use crate::style::Theme;
 use crate::term;
@@ -98,6 +99,13 @@ impl PluginCommand for Render {
                 Some('a'),
             )
             .switch("icons", "Add icons to file paths in tables.", Some('o'))
+            .named(
+                "theme",
+                SyntaxShape::String,
+                "Draw the lines of a `table` theme, such as `rounded` or `heavy`, or `card`, the default, for none.",
+                Some('t'),
+            )
+            .switch("list", "List the available themes.", Some('l'))
             .category(Category::Viewers)
     }
 
@@ -109,6 +117,16 @@ impl PluginCommand for Render {
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
         let head = call.head;
+        if call.has_flag("list")? {
+            let names = Border::names().map(|name| Value::string(name, head));
+            return Ok(Value::list(names.collect(), head).into_pipeline_data());
+        }
+        let border = match call.get_flag::<Spanned<String>>("theme")? {
+            Some(name) => Border::for_theme(&name.item).map_err(|err| {
+                LabeledError::new("`--theme` isn't a theme").with_label(err, name.span)
+            })?,
+            None => None,
+        };
         let as_png = call.has_flag("png")?;
         let copy = call.has_flag("copy")?;
         let mono = call.has_flag("mono")?;
@@ -228,7 +246,14 @@ impl PluginCommand for Render {
                 };
                 timer.lap("model");
                 let faces = if mono { fonts.mono } else { fonts.sans };
-                draw::lay_out(&grid, &fonts, faces, &theme, &screen, trim)
+                let settings = Settings {
+                    trim,
+                    border,
+                    line_color: theme.foreground(&styles.named("separator"), theme.muted),
+                    padding: (config.table.padding.left, config.table.padding.right),
+                    header_on_separator: config.table.header_on_separator,
+                };
+                draw::lay_out(&grid, &fonts, faces, &theme, &screen, settings)
             }
         }
         .map_err(LabeledError::new)?;
@@ -459,6 +484,7 @@ const TABLE_FLAGS: &[&str] = &[
     "flatten-separator",
     "abbreviated",
     "icons",
+    "theme",
 ];
 
 /// Hand the value to `table`, with the flags they share, for terminals that
@@ -476,7 +502,11 @@ fn fallback(
     table_call.named = call
         .named
         .iter()
-        .filter(|(name, _)| TABLE_FLAGS.contains(&name.item.as_str()))
+        .filter(|(name, value)| {
+            // `card` is `render`'s own; `table` uses its configured theme.
+            let card = matches!(value, Some(Value::String { val, .. }) if val.eq_ignore_ascii_case(crate::border::CARD));
+            TABLE_FLAGS.contains(&name.item.as_str()) && !card
+        })
         .cloned()
         .collect();
     Ok(engine.call_decl(

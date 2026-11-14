@@ -46,6 +46,8 @@ These work as they do in `table`:
 | `--index`, `-i` | `false` hides the `#` column, `true` shows it, and a number starts it there. Nested tables count from 0. |
 | `--abbreviated`, `-a` | Only this many rows at the top and bottom, with a `...` row between. Defaults to `$env.config.table.abbreviated_row_count`. |
 | `--icons`, `-o` | A file icon before each path that `LS_COLORS` styles, from devicons, as `table --icons` draws it. |
+| `--theme`, `-t` | Draw the lines of a `table` theme, such as `rounded`, `heavy` or `psql`, instead of the card. `card`, the default, has none. |
+| `--list`, `-l` | List the themes `--theme` takes, `card` first. |
 
 When `render` falls back to `table`, it passes these and `--width` along.
 
@@ -91,6 +93,18 @@ on stderr, why `render` fell back to `table`, or how long each phase took.
 - **Multi-line strings:** they keep their lines.
 - **Theme:** the card is dark, or light when the terminal reports a light
   background (OSC 11).
+- **Lines:** with `--theme`, each theme's lines as `table` draws them in
+  characters:
+  - frame, lines between columns, under the header, and between rows
+  - rounded, square or heavy corners
+  - thin, heavy, double or dotted strokes, and hearts for `with_love`
+  - the gaps between `restructured`'s columns
+
+  There is no card behind the lines, so the text sits on the terminal's own
+  background. The lines take `color_config.separator`, or a muted text color
+  without one. `padding` sets the space beside each column, one character
+  being the card's spacing. With `header_on_separator`, the header sits in a
+  gap on the top line, except in `markdown` and `restructured`.
 
 A string, such as `grid`'s output, draws as terminal text instead:
 - **Font and layout:** a monospace font, every character in the cells
@@ -246,6 +260,5 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   whatever isn't an answer, so keys typed while `render` runs are lost.
 - **Light theme:** untested on a real terminal. Rex doesn't answer OSC 11,
   so only the parser is tested.
-- **Not wired up:** `table`'s `--theme`, `--list` and `--collapse`, the
-  `padding` and `header_on_separator` settings that go with them, and plugin
-  config such as a font family.
+- **Not wired up:** `table`'s `--collapse`, and plugin config such as a
+  font family.

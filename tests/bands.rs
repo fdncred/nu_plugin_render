@@ -1,9 +1,10 @@
 //! A table painted in bands must match the same table painted whole, pixel
 //! for pixel, or the bands show seams in the terminal.
 
+use nu_plugin_render::border::Border;
 use nu_plugin_render::draw::{self, Body, Drawing, Screen};
 use nu_plugin_render::fonts::{Fonts, Rasterizer};
-use nu_plugin_render::layout::Trim;
+use nu_plugin_render::layout::Settings;
 use nu_plugin_render::model::{Align, Cell, Content, Grid};
 use nu_plugin_render::style::Theme;
 
@@ -125,10 +126,46 @@ fn bands_join_into_the_whole_table() {
         fonts.sans,
         &theme,
         &screen,
-        Trim::Wrap { keep_words: true },
+        Settings::card(theme.rule),
     )
     .expect("layout");
     assert_bands_match(&drawing, &theme, &fonts);
+}
+
+/// Themes' lines cross band edges: frames, row lines, rounded corners,
+/// dots, hearts, and a header on its line.
+#[test]
+fn bands_join_into_the_whole_table_with_lines() {
+    let fonts = Fonts::load().expect("system fonts");
+    let theme = Theme::dark();
+    let screen = Screen {
+        cell: (8, 16),
+        columns: 100,
+        rows: 30,
+    };
+    for (name, header_on_separator) in [
+        ("rounded", true),
+        ("thin", false),
+        ("dots", false),
+        ("with_love", true),
+        ("reinforced", false),
+    ] {
+        let settings = Settings {
+            border: Border::for_theme(name).expect("a theme"),
+            header_on_separator,
+            ..Settings::card(theme.muted)
+        };
+        let drawing = draw::lay_out(
+            &table(&theme),
+            &fonts,
+            fonts.sans,
+            &theme,
+            &screen,
+            settings,
+        )
+        .expect("layout");
+        assert_bands_match(&drawing, &theme, &fonts);
+    }
 }
 
 /// Lines like `grid -c -i`'s: an icon, colors, a highlighted name, rules,

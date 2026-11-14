@@ -2,6 +2,7 @@
 //! every line of text goes. Nothing here draws.
 
 use crate::ansi;
+use crate::border::Border;
 use crate::fonts::{FaceId, FacePair, Highlight, Line, Shaper};
 use crate::model::{Align, Cell, Content, Grid};
 use crate::style::{Rgba, Theme};
@@ -18,14 +19,45 @@ pub enum Trim {
     Truncate { suffix: String },
 }
 
+/// How `table`'s flags and settings shape a layout.
+#[derive(Clone, Debug)]
+pub struct Settings {
+    pub trim: Trim,
+    /// The theme's lines, or `None` for the card look.
+    pub border: Option<Border>,
+    /// The lines' color, from `color_config.separator`.
+    pub line_color: Rgba,
+    /// `$env.config.table.padding`: characters left and right of each
+    /// column. One is the card look's spacing.
+    pub padding: (usize, usize),
+    /// `$env.config.table.header_on_separator`: with lines, the header sits
+    /// on the top line instead of in a row of its own.
+    pub header_on_separator: bool,
+}
+
+impl Settings {
+    /// `table`'s defaults, with no lines.
+    pub fn card(line_color: Rgba) -> Self {
+        Settings {
+            trim: Trim::Wrap { keep_words: true },
+            border: None,
+            line_color,
+            padding: (1, 1),
+            header_on_separator: false,
+        }
+    }
+}
+
 /// Sizes that follow from the font size, in pixels.
 #[derive(Clone, Copy, Debug)]
 pub struct Geometry {
     pub px: f32,
     pub ascent: f32,
     pub line_height: f32,
-    /// Space left and right of each column.
-    pub pad_x: f32,
+    /// Space left of each column.
+    pub pad_left: f32,
+    /// Space right of each column.
+    pub pad_right: f32,
     /// Space above and below each row's text.
     pub pad_y: f32,
     /// Space above and below a nested table. Smaller than `pad_y`, so the
@@ -40,7 +72,8 @@ impl Geometry {
             px,
             ascent: metrics.ascent.round(),
             line_height: (metrics.ascent + metrics.descent + metrics.leading).ceil(),
-            pad_x: (px * 0.6).round(),
+            pad_left: (px * 0.6).round(),
+            pad_right: (px * 0.6).round(),
             pad_y: (px * 0.3).round(),
             inset: (px * 0.1).round(),
             radius: (px * 0.5).round(),
@@ -83,6 +116,12 @@ pub struct Block {
     pub cells: Vec<Vec<Placed>>,
     /// The header again below the last row, `header_height` tall.
     pub footer: bool,
+    /// The theme's lines, or `None` for the card look.
+    pub border: Option<Border>,
+    pub line_color: Rgba,
+    /// The header sits on the top line, `header_height` tall with the line
+    /// through its middle.
+    pub header_on_line: bool,
     /// Fitting cut a column other than the last short, such as a record's
     /// keys. A nested table like that shows its summary instead.
     pub cramped: bool,
@@ -98,7 +137,7 @@ pub struct Layout<'s, 'f> {
     pub geometry: Geometry,
     /// For colors written into the text with ANSI escapes.
     pub theme: &'s Theme,
-    pub trim: Trim,
+    pub settings: Settings,
 }
 
 /// A run of a cell's text in one style, kept so the text can wrap again.
@@ -186,7 +225,8 @@ impl Layout<'_, '_> {
         }
         align.extend(&grid.align);
         let column_count = align.len();
-        let chrome = column_count as f32 * 2.0 * self.geometry.pad_x;
+        let gutter = self.geometry.pad_left + self.geometry.pad_right;
+        let chrome = column_count as f32 * gutter;
         let available = max_width - chrome;
 
         let mut cells: Vec<Vec<Measured<'_>>> = Vec::with_capacity(grid.rows.len());
@@ -241,13 +281,13 @@ impl Layout<'_, '_> {
             .split_last()
             .is_some_and(|(_, before)| before.iter().any(|&cut| cut));
 
-        let suffix = match &self.trim {
+        let suffix = match &self.settings.trim {
             Trim::Truncate { suffix } => suffix.as_str(),
             Trim::Wrap { .. } => "…",
         };
         let ellipsis = self.shaper.line(suffix, self.faces.regular, false);
         let bold_ellipsis = self.shaper.line(suffix, self.faces.bold, false);
-        let keep_words = match self.trim {
+        let keep_words = match self.settings.trim {
             Trim::Wrap { keep_words } => Some(keep_words),
             Trim::Truncate { .. } => None,
         };
@@ -256,10 +296,10 @@ impl Layout<'_, '_> {
         let mut x = 0.0;
         for &width in &widths {
             columns.push(Column {
-                x: x + self.geometry.pad_x,
+                x: x + self.geometry.pad_left,
                 width,
             });
-            x += width + 2.0 * self.geometry.pad_x;
+            x += width + gutter;
         }
 
         let place = |cell: Measured, column: usize, ellipsis: &Line| -> Placed {
@@ -293,8 +333,14 @@ impl Layout<'_, '_> {
             }
         };
 
+        let border = self.settings.border;
+        let header_on_line = self.settings.header_on_separator
+            && !header.is_empty()
+            && border.is_some_and(|border| border.takes_header());
         let header_height = if header.is_empty() {
             0.0
+        } else if header_on_line {
+            self.geometry.line_height
         } else {
             self.geometry.line_height + 2.0 * self.geometry.pad_y
         };
@@ -363,6 +409,9 @@ impl Layout<'_, '_> {
             header,
             cells: placed_cells,
             footer,
+            border,
+            line_color: self.settings.line_color,
+            header_on_line,
             cramped,
         }
     }
