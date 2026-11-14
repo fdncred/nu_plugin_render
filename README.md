@@ -15,16 +15,31 @@ ls | render --png | save ls.png   # the picture, without a terminal
 ls | render --copy                # the picture, on the clipboard
 ```
 
-## Try it
+## Install
+
+`render` is built against `nu-plugin` 0.117.0, so it loads in Nushell
+0.117.x.
+
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads a
+prebuilt binary:
+
+```nu
+cargo binstall nu_plugin_render
+plugin add ~/.cargo/bin/nu_plugin_render    # nu_plugin_render.exe on Windows
+plugin use render
+```
+
+There are binaries for macOS (Apple silicon and Intel), Linux (x86_64 and
+aarch64, static) and Windows (x86_64 and aarch64). For anything else,
+binstall builds from source, as `cargo install nu_plugin_render` does. Only
+the macOS binaries have been run so far.
+
+To try a checkout without installing it:
 
 ```nu
 cargo build --release
 nu --plugins '[target/release/nu_plugin_render]'
 ```
-
-or `plugin add target/release/nu_plugin_render` and `plugin use render`.
-
-Built against `nu-plugin` 0.117.0, which loads in Nushell 0.117.x.
 
 ## Flags
 
@@ -302,6 +317,21 @@ On macOS:
   terminal with a light background. Rex doesn't answer OSC 11, so it always
   gets the dark theme.
 - **Not wired up:** plugin config, such as a font family.
+
+## Releasing
+
+1. Set `version` in Cargo.toml and commit.
+2. Push a tag of that version with a `v` in front: `git tag v0.1.0`, then
+   `git push origin v0.1.0`.
+3. The Release workflow (`.github/workflows/release.yml`) checks the tag
+   against Cargo.toml, builds the six archives with
+   `.github/package.sh`, and attaches them to a draft release. Publish the
+   draft.
+4. `cargo publish`, last, so a version on crates.io always has its
+   binaries.
+
+binstall reads `[package.metadata.binstall]` from the crate on crates.io,
+and downloads the archive for the user's platform from the GitHub release.
 
 ## License
 

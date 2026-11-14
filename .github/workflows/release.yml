@@ -1,0 +1,90 @@
+# Builds the archives `cargo binstall nu_plugin_render` downloads, when a tag
+# like v0.1.0 is pushed, and attaches them to a draft release. binstall sees
+# them once the draft is published.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # binstall builds its download URLs from the version in Cargo.toml, so
+      # a tag that doesn't match it makes archives nobody can find.
+      - name: Match the tag to Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::the tag is $GITHUB_REF_NAME, but Cargo.toml's version is $version"
+            exit 1
+          fi
+
+  build:
+    name: ${{ matrix.target }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          # binstall on a glibc Linux falls back to these static builds.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    permissions:
+      # Attach the archive to the draft release.
+      contents: write
+    env:
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      # The linker that comes with Rust links static musl binaries for
+      # either architecture, so no cross toolchain is needed.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          target: ${{ matrix.target }}
+          cache: false
+          # Warnings shouldn't stop a release build.
+          rustflags: ''
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        run: echo "archive=$(.github/package.sh ${{ matrix.target }})" >> "$GITHUB_OUTPUT"
+
+      # nushell's release workflow pins this version: later ones make a
+      # draft per job when several jobs add to one draft release
+      # (softprops/action-gh-release#445).
+      - name: Attach to the draft release
+        uses: softprops/action-gh-release@69320dbe05506a9a39fc8ae11030b214ec2d1f87 # v2.0.5
+        with:
+          draft: true
+          files: ${{ steps.package.outputs.archive }}
