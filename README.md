@@ -130,7 +130,9 @@ A string, such as `grid`'s output, draws as terminal text instead:
   line, in a quiet rule color unless the text colors them.
 - **Icons:** Nerd Font icons come from an installed Nerd Font. Private-use
   characters ask Nerd Fonts first, since other fonts put unrelated symbols
-  there.
+  there. A Nerd Font's Mono variant is used last: it shrinks icons to one
+  character's width, while the others draw them at the font's size, as
+  terminals show them.
 - **Symbols:** a one-cell symbol the font lacks, such as `♥`, is drawn from
   a text font. A two-cell one, such as `⚡`, comes from a color emoji font.
 - **Fitting:** text wider than the screen shrinks evenly, to no less than
