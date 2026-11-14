@@ -240,6 +240,19 @@ registry:
 nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_render]'
 ```
 
+## Terminals
+
+On macOS:
+
+| Terminal | Draws with | Result |
+| --- | --- | --- |
+| Ghostty | kitty graphics | Works, tall drawings too. |
+| kitty | kitty graphics | Works. |
+| WezTerm | kitty graphics | Works. |
+| iTerm2 3.7 | kitty graphics | Works. iTerm2 has sixel too, but kitty graphics come first. |
+| Rex | kitty graphics | The top of a tall drawing stays blank. This is a Rex bug, confirmed by its authors. |
+| tmux in Ghostty | `table` | Ghostty has no sixel, and kitty graphics don't pass through tmux. |
+
 ## Not done yet
 
 - **sixel:** untested on a real sixel terminal; the tests decode its output
@@ -256,13 +269,6 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
   and falls back to `table` otherwise. Kitty graphics don't pass through
   tmux. Drawing inside tmux is untested on a sixel terminal.
 - **zellij:** untested.
-- **Rex:** the top of a tall drawing stays blank. `$env | render -e` at 148
-  columns loses about 60% of its height, drawn at full resolution or at a
-  quarter of the pixels. Replayed with an id on each image, the same output
-  stays in Rex's memory: it dropped only the oldest 8% of the bands at full
-  resolution, to its 128 MiB limit, and none at a quarter. `render` sends
-  images without ids, and whether Rex keeps those isn't known yet. Ghostty
-  shows the same output whole.
 - **Speed:** `$env | render -e` at 143 columns (142 × 461 cells, about 34
   million pixels) takes about 130 ms in the plugin, and Rex then takes
   about 230 ms to show it. `table -e` takes about 20 ms. Of the plugin's
