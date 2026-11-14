@@ -73,6 +73,16 @@ A string, such as `grid`'s output, draws as terminal text instead:
   `unicode-width` gives it, tabs every 8 cells.
 - **Colors:** foreground, background, bold, dim, underline and reverse from
   its ANSI escapes. Other escape sequences, such as OSC 8 links, are dropped.
+- **`display_output` hook:** a string that carries a content type, such as
+  the output of `to json` or `open --raw`, goes through
+  `$env.config.hooks.display_output` first, as it would before nushell
+  shows it. A hook that colors JSON with `bat` or nuon with `nu-highlight`
+  colors the drawing too.
+  - Other values skip the hook, since a hook ends in `table`, which would
+    turn them into text.
+  - A `render` inside the hook doesn't run the hook again.
+  - A hook written as a string, not a closure, can't run from a plugin and
+    is skipped.
 - **Box drawing:** `│` and `─` draw as thin lines that join from line to
   line, in a quiet rule color unless the text colors them.
 - **Icons:** Nerd Font icons come from an installed Nerd Font. Private-use

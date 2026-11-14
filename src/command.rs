@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lscolors::LsColors;
 use nu_ansi_term::Style;
@@ -94,6 +95,7 @@ impl PluginCommand for Render {
         let metadata = input.metadata_ref().cloned();
         let value = input.into_value(head)?;
         let mut timer = Timer::new();
+        let value = run_display_hook(engine, value, metadata.as_ref());
 
         let caps = if as_png || copy {
             None
@@ -212,6 +214,88 @@ impl PluginCommand for Render {
             timer.report()
         ));
         Ok(Value::string(out, head).into_pipeline_data())
+    }
+}
+
+/// `display_output` hooks running in this plugin process. A hook that calls
+/// `render` would otherwise run itself again.
+static HOOKS_RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts a running hook until dropped, even when the hook fails.
+struct HookGuard;
+
+impl HookGuard {
+    fn enter() -> Self {
+        HOOKS_RUNNING.fetch_add(1, Ordering::SeqCst);
+        HookGuard
+    }
+}
+
+impl Drop for HookGuard {
+    fn drop(&mut self) {
+        HOOKS_RUNNING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Run the `display_output` hook on a string that carries a content type,
+/// such as the output of `to json`, the way nushell does before showing
+/// it, so a hook that colors JSON or nuon colors the drawing too. Other
+/// values skip it: a hook ends in `table`, which would turn data into text.
+/// On any failure the string is drawn as it came.
+fn run_display_hook(
+    engine: &EngineInterface,
+    value: Value,
+    metadata: Option<&PipelineMetadata>,
+) -> Value {
+    if !matches!(value, Value::String { .. })
+        || metadata.is_none_or(|metadata| metadata.content_type.is_none())
+        || HOOKS_RUNNING.load(Ordering::SeqCst) > 0
+    {
+        return value;
+    }
+    let config = match engine.get_config() {
+        Ok(config) => config,
+        Err(err) => {
+            debug(&format!("skipping `display_output`: {err}"));
+            return value;
+        }
+    };
+    let hook = match &config.hooks.display_output {
+        Some(hook @ Value::Closure { val, .. }) => Spanned {
+            item: (**val).clone(),
+            span: hook.span(),
+        },
+        Some(_) => {
+            debug("skipping `display_output`: a plugin can only run a closure hook");
+            return value;
+        }
+        None => return value,
+    };
+    let span = value.span();
+    let _guard = HookGuard::enter();
+    let output = match engine.eval_closure_with_stream(
+        &hook,
+        Vec::new(),
+        PipelineData::value(value.clone(), metadata.cloned()),
+        true,
+        false,
+    ) {
+        Ok(output) => output.into_value(span),
+        Err(err) => Err(err),
+    };
+    match output {
+        Ok(output @ Value::String { .. }) => output,
+        Ok(other) => {
+            debug(&format!(
+                "ignoring `display_output`: it returned {}, not a string",
+                other.get_type()
+            ));
+            value
+        }
+        Err(err) => {
+            debug(&format!("`display_output` failed: {err}"));
+            value
+        }
     }
 }
 
