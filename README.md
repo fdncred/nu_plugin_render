@@ -231,9 +231,11 @@ nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_rend
 - **Windows:** there is no terminal probe yet, so it always falls back.
 - **tmux, zellij:** no passthrough, so they fall back.
 - **Rex:** the top of a tall drawing stays blank. `$env | render -e` at 148
-  columns loses about 60% of its height. Rex keeps 128 MiB of image data
-  and drops the oldest images first, but that accounts for only a tenth of
-  it; the cause of the rest isn't known. Ghostty shows the same output
+  columns loses about 60% of its height, drawn at full resolution or at a
+  quarter of the pixels. Rex still holds the images but doesn't draw them:
+  replaying `render`'s output, Rex dropped only the oldest 8% of the bands
+  at full resolution, to its 128 MiB limit, and none at a quarter.
+  `--budget` keeps a drawing short enough. Ghostty shows the same output
   whole.
 - **Speed:** `$env | render -e` at 143 columns (142 × 461 cells, about 34
   million pixels) takes about 130 ms in the plugin, and Rex then takes
