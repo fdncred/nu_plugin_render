@@ -14,7 +14,11 @@ set -euo pipefail
 
 target=$1
 name=nu_plugin_render
-version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+if [ -z "$version" ]; then
+    echo "package.sh: no version in Cargo.toml" >&2
+    exit 1
+fi
 build=${CARGO_TARGET_DIR:-target}/$target/release
 
 case $target in

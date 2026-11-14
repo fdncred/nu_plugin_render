@@ -32,7 +32,7 @@ plugin use render
 There are binaries for macOS (Apple silicon and Intel), Linux (x86_64 and
 aarch64, static) and Windows (x86_64 and aarch64). For anything else,
 binstall builds from source, as `cargo install nu_plugin_render` does. Only
-the macOS binaries have been run so far.
+the Apple silicon binary has been run so far.
 
 To try a checkout without installing it:
 

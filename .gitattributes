@@ -1,0 +1,3 @@
+# LF everywhere, Windows runners included: .github/package.sh runs under
+# bash there, and a CR breaks it.
+* text=auto eol=lf

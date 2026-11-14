@@ -26,7 +26,7 @@ jobs:
       # a tag that doesn't match it makes archives nobody can find.
       - name: Match the tag to Cargo.toml
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::the tag is $GITHUB_REF_NAME, but Cargo.toml's version is $version"
             exit 1
@@ -88,3 +88,5 @@ jobs:
         with:
           draft: true
           files: ${{ steps.package.outputs.archive }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
