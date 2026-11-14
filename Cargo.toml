@@ -32,16 +32,25 @@ libc = "0.2.191"
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 
-# `cargo binstall nu_plugin_render` downloads the archives that
-# .github/workflows/release.yml builds; .github/package.sh names and fills
-# them to match this.
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+# Without symbols the macOS binary is a third smaller.
+strip = "symbols"
+
+# `cargo binstall` downloads the archives dist uploads to each GitHub release.
+# They hold the binary in a folder named after the archive, except on Windows,
+# where the zip has no folder.
 [package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }-v{ version }{ archive-suffix }"
-bin-dir = "{ bin }{ binary-ext }"
-pkg-fmt = "tgz"
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "zip"
 
 [package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "zip"

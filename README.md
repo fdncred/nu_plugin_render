@@ -1,27 +1,67 @@
 # nu_plugin_render
 
-A prototype Nushell plugin. `render` draws a table as pixels and shows it in
-the terminal with the kitty graphics protocol, or sixel, so columns line up
-exactly, emoji and CJK keep their width, and nested lists and records show
-as nested cards. A string draws as terminal text in its own ANSI colors, so
-the output of `grid` keeps its layout. When the terminal can show neither,
-`render` prints what `table` prints.
+`table` lines columns up in characters. `render` lines them up in pixels.
+
+![ls drawn by render, with file icons and LS_COLORS](images/ls.png)
+
+`render` is a Nushell plugin, still a prototype. It draws a table as an image
+and shows it in the terminal with the kitty graphics protocol or sixel.
+Columns line up exactly, emoji and CJK keep their width, and nested lists and
+records become nested cards. A string draws as terminal text in its own ANSI
+colors, so `grid` output keeps its layout. When the terminal can show neither
+kind of image, `render` prints what `table` prints.
 
 ```nu
-ls | render
-open data.json | render -e         # nested lists and records as nested cards
-ls | grid -c -i name | render      # text that lines itself up stays lined up
-ls | render --png | save ls.png   # the picture, without a terminal
-ls | render --copy                # the picture, on the clipboard
+ls | select name type size | render --icons  # the picture above
+open data.json | render -e                   # nested lists and records as nested cards
+ls | grid -c -i name | render                # text that lines itself up stays lined up
+ls | render --png | save ls.png              # the picture, without a terminal
+ls | render --copy                           # the picture, on the clipboard
 ```
+
+## Examples
+
+With `-e`, nested lists and records become cards inside their cells. Emoji
+and CJK don't throw the columns off, and floats line up on the decimal point.
+
+```nu
+[
+  {city: 'Zürich 🏔', hello: [grüezi hallo], score: 8.125, tags: {lang: de, cafe: true}}
+  {city: '東京 🗼', hello: [こんにちは やあ], score: 10.5, tags: {lang: ja, cafe: true}}
+  {city: 'Paris ☕', hello: [bonjour salut], score: 9.75, tags: {lang: fr, cafe: false}}
+] | render -e
+```
+
+![three cities with nested lists and records drawn as cards](images/nested.png)
+
+`--theme` draws the lines of a `table` theme instead of the card:
+
+```nu
+ls src | select name type size | first 6 | render -t rounded
+```
+
+![a table with the rounded theme's lines](images/rounded.png)
+
+A string, such as `grid` output, draws as terminal text in a monospace font,
+Nerd Font icons included:
+
+```nu
+ls src tests | grid -c -i name | render
+```
+
+![grid output with Rust file icons, drawn by render](images/grid.png)
+
+Every picture in this README is `render --png -w 90` output.
 
 ## Install
 
 `render` is built against `nu-plugin` 0.117.0, so it loads in Nushell
 0.117.x.
 
-[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads a
-prebuilt binary:
+Each [release](https://github.com/fdncred/nu_plugin_render/releases) has
+binaries for macOS, Linux and Windows, on x86_64 and ARM64.
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall) downloads the
+one for your system into `~/.cargo/bin`:
 
 ```nu
 cargo binstall nu_plugin_render
@@ -29,10 +69,8 @@ plugin add ~/.cargo/bin/nu_plugin_render    # nu_plugin_render.exe on Windows
 plugin use render
 ```
 
-There are binaries for macOS (Apple silicon and Intel), Linux (x86_64 and
-aarch64, static) and Windows (x86_64 and aarch64). For anything else,
-binstall builds from source, as `cargo install nu_plugin_render` does. Only
-the Apple silicon binary has been run so far.
+On any other system, binstall builds from source, as `cargo install
+nu_plugin_render` does. Nobody has run the Linux or Windows binaries yet.
 
 To try a checkout without installing it:
 
@@ -45,213 +83,230 @@ nu --plugins '[target/release/nu_plugin_render]'
 
 | Flag | What it does |
 | --- | --- |
-| `--png` | Return the whole drawing as PNG bytes instead of drawing it, cut to the card. It is painted and encoded a band at a time, so a tall table needs no more memory than one band. |
-| `--copy` | Copy the drawing to the clipboard as an image, cut to the card, instead of drawing it. With `--png` too, it also returns the PNG. |
-| `--mono` | Draw a table in a monospace font instead of a sans-serif one. Strings always draw in monospace. |
+| `--png` | Return the drawing as PNG bytes, cut to the card, instead of showing it. `render` paints and encodes it one band at a time, so a tall table needs no more memory than one band. |
+| `--copy` | Copy the drawing to the clipboard as an image, cut to the card, instead of showing it. With `--png` as well, it also returns the PNG. |
+| `--mono` | Draw a table in a monospace font instead of a sans-serif one. Strings always use monospace. |
 | `--width`, `-w` | The widest the drawing may be, in terminal columns. Defaults to the terminal's width, or 160 with `--png` or `--copy`. |
-| `--budget` | Draw at most this many million pixels. A table stops at a whole row and a string at a whole line, ending in a note such as `… 1,941 more rows`. Without it, everything is drawn. |
+| `--budget` | Draw at most this many million pixels. A table stops at a whole row and a string at a whole line, and a note such as `… 1,941 more rows` ends the drawing. Without it, `render` draws everything. |
 
 These work as they do in `table`:
 
 | Flag | What it does |
 | --- | --- |
-| `--expand`, `-e` | Nested lists and records draw as nested cards, however deep. Without it they show as summaries, such as `[table 3 rows]`. |
-| `--expand-deep`, `-d` | How many levels `--expand` nests; deeper ones show their summary. |
-| `--flatten` | With `--expand`, a list of plain values in a table's row shows as one line. A record's values don't flatten. |
+| `--expand`, `-e` | Draw nested lists and records as nested cards, however deep. Without it they show as summaries such as `[table 3 rows]`. |
+| `--expand-deep`, `-d` | How many levels `--expand` nests. Deeper ones show their summary. |
+| `--flatten` | With `--expand`, a list of plain values in a table's row shows on one line. A record's values don't flatten. |
 | `--flatten-separator` | What `--flatten` joins with. Defaults to a space. |
-| `--collapse`, `-c` | Nested tables merge into their cells: each fills its cell and shares its lines, with lines between all rows. Every level nests, and the index shows only with `--index`. On the card, the merged cells get quiet lines. |
+| `--collapse`, `-c` | Merge nested tables into their cells. Each one fills its cell and shares its lines, with lines between all rows. Every level nests, and the index shows only with `--index`. On the card, the merged cells get quiet lines. |
 | `--index`, `-i` | `false` hides the `#` column, `true` shows it, and a number starts it there. Nested tables count from 0. |
-| `--abbreviated`, `-a` | Only this many rows at the top and bottom, with a `...` row between. Defaults to `$env.config.table.abbreviated_row_count`. |
-| `--icons`, `-o` | A file icon before each path that `LS_COLORS` styles, from devicons, as `table --icons` draws it. |
-| `--theme`, `-t` | Draw the lines of a `table` theme, such as `rounded`, `heavy` or `psql`, instead of the card. `card`, the default, has none. |
+| `--abbreviated`, `-a` | Show only this many rows at the top and bottom, with a `...` row between. Defaults to `$env.config.table.abbreviated_row_count`. |
+| `--icons`, `-o` | Put a file icon from devicons before each path that `LS_COLORS` styles, as `table --icons` does. |
+| `--theme`, `-t` | Draw the lines of a `table` theme, such as `rounded`, `heavy` or `psql`, instead of the card. `card`, the default, has no lines. |
 | `--list`, `-l` | List the themes `--theme` takes, `card` first. |
 
-When `render` falls back to `table`, it passes these and `--width` along.
+When `render` falls back to `table`, it passes these flags and `--width`
+along.
 
-Set `NU_PLUGIN_RENDER_DEBUG=1` in the environment Nushell starts with to see,
-on stderr, why `render` fell back to `table`, or how long each phase took.
+To see why `render` fell back, or how long each phase took, set
+`NU_PLUGIN_RENDER_DEBUG=1` in the environment Nushell starts with. `render`
+writes the reason and the timings to stderr.
 
 ## What it draws
 
-- **Header and index:** a header band, and the `#` index column per
-  `$env.config.table.index_mode`.
-- **Rows:** zebra stripes on a rounded card.
-- **Colors:** `color_config` colors, closures included.
-- **`LS_COLORS`:** used for path columns such as `ls`'s `name`, as `table`
-  does:
+A table gets:
+
+- A header band, and the `#` index column as
+  `$env.config.table.index_mode` says.
+- Zebra-striped rows on a rounded card.
+- Colors from `color_config`, closures included.
+- `LS_COLORS` colors on path columns, such as the `name` column of `ls`,
+  following `table`'s rules:
   - nushell's own defaults when `$env.LS_COLORS` isn't set
-  - nothing when `$env.config.ls.use_ls_colors` is off
+  - no colors when `$env.config.ls.use_ls_colors` is off
   - the default text color for a path with no style
   - a background, such as the one on `README.md`, drawn as a highlight
-- **ANSI text in cells:** text with ANSI escapes in a cell keeps its colors,
-  bold, and backgrounds.
-- **Numbers:** right-aligned with tabular digits. Columns of floats line up
-  on the decimal point, at `float_precision`.
-- **Nested values:** with `--expand`, lists and records nest as smaller
-  cards.
-- **Footer:** the header again below the rows, per `footer_mode`, counting
-  nested rows too with `footer_inheritance`.
-- **Empty values:** an empty list or record draws a dimmed `empty list` or
-  `empty record` with `show_empty`, and nothing without it.
-- **Missing values:** a record in a list without one of the list's columns
-  shows `$env.config.table.missing_value_symbol`, centered, in the `empty`
-  color.
-- **Fitting:** when the table is wider than the screen:
-  - The widest text columns get narrower. Their text wraps, between words
-    when `wrapping_try_keep_words` is on, or with `trim.methodology:
-    truncating`, is cut short and ends in `truncating_suffix`. Number
-    columns shrink only when they alone are wider than the screen.
-  - Each column's nested tables get the room the other columns leave.
-  - A nested table shows its summary, such as `{record 39 fields}`, when it
-    would get less room than about two dozen characters, or when fitting it
-    would cut any column but its last (such as a record's keys).
-  - If the table is still too wide, the widest nested tables collapse one
-    at a time until it fits.
-- **Multi-line strings:** they keep their lines.
-- **Theme:** the card is dark, or light when the terminal reports a light
-  background (OSC 11).
-- **Lines:** with `--theme`, each theme's lines as `table` draws them in
-  characters:
-  - frame, lines between columns, under the header, and between rows
-  - rounded, square or heavy corners
-  - thin, heavy, double or dotted strokes, and hearts for `with_love`
-  - the gaps between `restructured`'s columns
+- The colors, bold and backgrounds of any ANSI escapes inside a cell.
+- Numbers aligned right, in tabular digits. A column of floats lines up on
+  the decimal point, at `float_precision`.
+- With `--expand`, nested lists and records as smaller cards.
+- A footer that repeats the header below the rows, as `footer_mode` says.
+  With `footer_inheritance`, nested rows count toward it.
+- With `show_empty`, a dimmed `empty list` or `empty record` for an empty
+  value. Without it, nothing.
+- `$env.config.table.missing_value_symbol`, centered in the `empty` color,
+  where a record in a list lacks one of the list's columns.
+- Multi-line strings, with their lines kept.
+- A dark card, or a light one when the terminal reports a light background
+  through OSC 11.
 
-  In the terminal there is no card behind the lines, so the text sits on
-  the terminal's own background. `--png` and `--copy` put the card's color
-  behind them, since an image elsewhere has no background to sit on. The lines take `color_config.separator`, or a muted text color
-  without one. `padding` sets the space beside each column, one character
-  being the card's spacing. With `header_on_separator`, the header sits in a
-  gap on the top line, except in `markdown` and `restructured`.
+When a table is wider than the screen, `render` fits it in these steps:
 
-A string, such as `grid`'s output, draws as terminal text instead:
-- **Font and layout:** a monospace font, every character in the cells
-  `unicode-width` gives it, tabs every 8 cells.
-- **Colors:** foreground, background, bold, dim, underline and reverse from
-  its ANSI escapes. Other escape sequences, such as OSC 8 links, are dropped.
-- **`display_output` hook:** a string that carries a content type, such as
-  the output of `to json` or `open --raw`, goes through
-  `$env.config.hooks.display_output` first, as it would before nushell
-  shows it. A hook that colors JSON with `bat` or nuon with `nu-highlight`
-  colors the drawing too.
-  - Other values skip the hook, since a hook ends in `table`, which would
-    turn them into text.
+1. The widest text columns get narrower. Their text wraps, between words
+   when `wrapping_try_keep_words` is on. With `trim.methodology:
+   truncating`, `render` cuts the text short instead and ends it with
+   `truncating_suffix`. Number columns shrink only when they alone are wider
+   than the screen.
+2. Each column's nested tables get the room the other columns leave.
+3. A nested table shows its summary, such as `{record 39 fields}`, when it
+   would get less than about two dozen characters, or when fitting it would
+   cut any column but its last, such as a record's keys.
+4. If the table is still too wide, the widest nested tables collapse one at
+   a time until it fits.
+
+With `--theme`, `render` draws each theme's lines the way `table` draws them
+in characters:
+
+- the frame, and the lines between columns, under the header and between
+  rows
+- rounded, square or heavy corners
+- thin, heavy, double or dotted strokes, and hearts for `with_love`
+- the gaps between `restructured`'s columns
+
+In the terminal there's no card behind the lines, so the text sits on the
+terminal's own background. `--png` and `--copy` put the card's color behind
+them, because an image pasted somewhere else has no background to sit on.
+The lines take `color_config.separator`, or a muted text color without one.
+`padding` sets the space beside each column, and one character of it is the
+card's spacing. With `header_on_separator`, the header sits in a gap in the
+top line, except in `markdown` and `restructured`.
+
+A string, such as `grid` output, draws as terminal text instead:
+
+- It uses a monospace font. Each character takes the cells `unicode-width`
+  gives it, and tabs stop every 8 cells.
+- Its ANSI escapes set foreground, background, bold, dim, underline and
+  reverse. `render` drops other escape sequences, such as OSC 8 links.
+- A string that carries a content type, such as the output of `to json` or
+  `open --raw`, goes through `$env.config.hooks.display_output` first, as it
+  would before nushell shows it. A hook that colors JSON with `bat`, or nuon
+  with `nu-highlight`, colors the drawing too.
+  - Other values skip the hook. A hook ends in `table`, which would turn
+    them into text.
   - A `render` inside the hook doesn't run the hook again.
   - Only a drawing goes through the hook. When `render` falls back, `table`
-    gets the string as it came, and nushell's own hook runs as usual.
-  - A hook written as a string, not a closure, can't run from a plugin and
-    is skipped.
-- **Box drawing:** `│` and `─` draw as thin lines that join from line to
-  line, in a quiet rule color unless the text colors them.
-- **Icons:** Nerd Font icons come from an installed Nerd Font. Private-use
-  characters ask Nerd Fonts first, since other fonts put unrelated symbols
-  there. A Nerd Font's Mono variant is used last: it shrinks icons to one
-  character's width, while the others draw them at the font's size, as
-  terminals show them.
-- **Symbols:** a one-cell symbol the font lacks, such as `♥`, is drawn from
-  a text font. A two-cell one, such as `⚡`, comes from a color emoji font.
-- **Fitting:** text wider than the screen shrinks evenly, to no less than
-  three quarters of the terminal's size. Lines still too long wrap, as in a
-  terminal.
+    gets the string as it came, and nushell runs its own hook as usual.
+  - A hook written as a string instead of a closure can't run from a
+    plugin, so `render` skips it.
+- `│` and `─` draw as thin lines that join from line to line, in a quiet
+  rule color unless the text colors them.
+- Nerd Font icons come from an installed Nerd Font. For private-use
+  characters, `render` asks Nerd Fonts first, since other fonts put
+  unrelated symbols there. It tries a Nerd Font's Mono variant last. Mono
+  shrinks icons to one character's width, and the other variants draw them
+  at the font's size, the way terminals show them.
+- A one-cell symbol the font lacks, such as `♥`, comes from a text font. A
+  two-cell one, such as `⚡`, comes from a color emoji font.
+- Text wider than the screen shrinks evenly, to no less than three quarters
+  of the terminal's size. Lines that are still too long wrap, as they would
+  in a terminal.
 
 ## How it works
 
-From value to pixels, nothing touches the terminal:
+Six modules turn a value into pixels, and none of them touch the terminal:
 
-- `model`: value to grid of styled text
-- `layout`: measure with real fonts, fit columns
-- `paint`: draw RGBA bands
-- `draw`: cell-sized bands, PNG, and a streamed PNG of the whole drawing
-- `ansi`: escape codes to styled spans
-- `text`: a string laid out on terminal cells
-- `term` probes the terminal: it takes the foreground from Nushell, then sends
-  queries to `/dev/tty` in raw mode: the kitty graphics query, `CSI 16t`,
-  `CSI 14t`, OSC 11, a three-byte image in a temporary file, and DA1. Any
-  failure falls back to `table`. The plugin keeps the answers, so later
-  calls only read the window's size and never read from the terminal.
+- `model` turns a value into a grid of styled text.
+- `layout` measures it with real fonts and fits the columns.
+- `paint` draws RGBA bands.
+- `draw` makes cell-sized bands, encodes PNG, and streams a PNG of the
+  whole drawing.
+- `ansi` turns escape codes into styled spans.
+- `text` lays a string out on terminal cells.
+
+Three modules talk to the terminal:
+
+- `term` probes it. It takes the foreground from Nushell, then sends queries
+  to `/dev/tty` in raw mode: the kitty graphics query, `CSI 16t`, `CSI 14t`,
+  OSC 11, a three-byte image in a temporary file, and DA1. Any failure falls
+  back to `table`. The plugin keeps the answers, so later calls only read
+  the window's size and never read from the terminal.
 - `kitty` writes each band with `C=1`, after newlines make room, so the
-  screen scrolls before the image goes up. When the terminal read the
-  temporary file in the probe, which means it runs on this machine, a band
-  goes as raw RGBA in a temporary file (`f=32,t=t`), which the terminal reads
-  and deletes. Otherwise it goes inline as base64 PNG (`f=100`).
-- `sixel`, for a terminal without kitty graphics whose device attributes
-  include sixel and that reports its cell size: the whole drawing as one
-  image, drawn pixel for pixel. Over a background the terminal reports, the
-  image is blended onto it first, so edges stay smooth; otherwise pixels
-  less than half opaque are left out. Colors come down to a 256-color
-  palette, without dithering.
+  screen scrolls before the image goes up. If the terminal read the
+  temporary file during the probe, it runs on this machine, and each band
+  goes as raw RGBA in a temporary file with `f=32,t=t`. The terminal reads
+  the file and deletes it. Otherwise each band goes inline as base64 PNG,
+  with `f=100`.
+- `sixel` is for a terminal that has no kitty graphics, lists sixel in its
+  device attributes and reports its cell size. It sends the whole drawing as
+  one image, pixel for pixel. When the terminal reports its background,
+  `render` blends the image onto it first, so edges stay smooth. Otherwise
+  it leaves out pixels less than half opaque. Colors come down to a
+  256-color palette, without dithering.
 
-Details:
-- **Image size:** text is drawn at about the terminal's font size. Terminals
-  that report cells under 24 pixels tall are counting points on a HiDPI
-  screen, so those images get twice the pixels.
-- **Bands:** the drawing goes out as images 40 cell rows tall. They are cut
-  on cell rows, so they join without seams, and are painted on every core,
-  each thread with its own glyph cache.
-- **Why 40 rows:** every image costs the terminal time, so fewer, taller
-  bands show sooner. In Rex, `$env | render -e` at 143 columns took 141 ms
-  to show in 22-row bands, 240 ms in 4-row bands, and 318 ms in 1-row
-  bands.
-- **Temporary files** that no terminal read, from output that never reached
-  one (such as `render | ignore`), are deleted on the next call once they're
-  a minute old.
-- **Fonts:** they come from the system through `fontdb`; none are bundled.
-  Each character the main face lacks is looked up in a list of fallback
-  families, Nerd Fonts first, then Apple Color Emoji, PingFang, Noto, Segoe
-  UI Emoji and others, then in every installed face.
+`render` draws text at about the terminal's font size. A terminal that
+reports cells under 24 pixels tall is counting points on a HiDPI screen, so
+its images get twice the pixels.
+
+The drawing goes out as images 40 cell rows tall. The cuts fall on cell
+rows, so the bands join without seams. Every core paints bands, each thread
+with its own glyph cache.
+
+**Why 40 rows.** Every image costs the terminal time, so fewer, taller bands
+show sooner. In Rex, `$env | render -e` at 143 columns took 141 ms to show
+in 22-row bands, 240 ms in 4-row bands and 318 ms in 1-row bands.
+
+Output that never reaches a terminal, such as `render | ignore`, leaves
+temporary files nobody reads. The next call deletes them once they're a
+minute old.
+
+`render` bundles no fonts. It finds the system's through `fontdb`. For each
+character the main face lacks, it looks through a list of fallback families:
+Nerd Fonts first, then Apple Color Emoji, PingFang, Noto, Segoe UI Emoji and
+others, then every installed face.
 
 ## Dependencies
 
-The rendering stack is MIT and/or Apache-2.0:
+Everything `render` draws with is MIT, Apache-2.0 or both:
 
-- `swash`: shaping and glyphs
-- `fontdb`: system fonts
+- `swash` for shaping and glyphs
+- `fontdb` for system fonts
 - `png`
 - `base64`
 - `lscolors`
 - `unicode-width`
-- `libc` (Unix)
-- `windows-sys` (Windows): the console, for the probe
-- `nu-utils`: nushell's default `LS_COLORS`
-- `arboard` with `image-data` and `wayland-data-control`: the clipboard, as
-  nushell's `clip copy` uses it
-- `devicons`: file icons for `--icons`, as `table --icons` uses it
-- `icy_sixel`: the sixel encoder
+- `libc`, on Unix
+- `windows-sys`, on Windows, for the console the probe reads
+- `nu-utils` for nushell's default `LS_COLORS`
+- `arboard` with `image-data` and `wayland-data-control` for the clipboard,
+  as nushell's `clip copy` uses it
+- `devicons` for the `--icons` file icons, as `table --icons` uses it
+- `icy_sixel`, the sixel encoder
 
-Their trees add:
-- `slotmap`: Zlib, via `fontdb`
-- `moxcms` and `pxfm`: BSD-3-Clause OR Apache-2.0, via `arboard`'s `image`
-- `quantette`, `palette` and the rest of `icy_sixel`'s tree: MIT and/or
-  Apache-2.0, or Zlib OR Apache-2.0 OR MIT
+Their dependencies add:
+
+- `slotmap`, Zlib, through `fontdb`
+- `moxcms` and `pxfm`, BSD-3-Clause OR Apache-2.0, through `arboard`'s
+  `image`
+- `quantette`, `palette` and the rest of `icy_sixel`'s tree, under MIT
+  and/or Apache-2.0, or Zlib OR Apache-2.0 OR MIT
 
 The other licenses `cargo tree` shows come from the Nushell plugin crates,
 which every plugin depends on:
 
-- `brotli`: BSD-3-Clause
-- `option-ext`: MPL-2.0
-- ICU: Unicode-3.0
+- `brotli`, BSD-3-Clause
+- `option-ext`, MPL-2.0
+- ICU, Unicode-3.0
 - `self_cell`
-- `is_ci`: ISC
+- `is_ci`, ISC
 
 ## Tests
 
 `cargo test` checks the terminal-reply parser, the ANSI parser, text
 clusters and widths, and the kitty escape codes.
 
-It also paints two drawings both whole and in bands of 1, 2, 7 and 28 cell
-rows, and checks that the joined bands match the whole drawing byte for
-byte:
+It also paints two drawings whole and in bands of 1, 2, 7 and 28 cell rows,
+and checks that the joined bands match the whole drawing byte for byte:
+
 - a table with nested tables and two-line cells
 - `grid`-like terminal text with icons, highlights and rules, shrunk and
   wrapped
 
-A third test decodes the streamed `--png` output and checks it against the
+A third test decodes the streamed `--png` output and compares it with the
 drawing painted whole. These tests need the system's fonts.
 
 To test without a registered `render` in the way, give nushell an empty
 registry:
 
-```sh
+```nu
 nu --plugin-config /tmp/empty.msgpackz --plugins '[target/release/nu_plugin_render]'
 ```
 
@@ -265,73 +320,75 @@ On macOS:
 | kitty | kitty graphics | Works. |
 | WezTerm | kitty graphics | Works. |
 | iTerm2 3.7 | kitty graphics | Works. iTerm2 has sixel too, but kitty graphics come first. |
-| Rex | kitty graphics | The top of a tall drawing stays blank. This is a Rex bug, confirmed by its authors. |
+| Rex | kitty graphics | The top of a tall drawing stays blank. Rex's authors confirmed it's a Rex bug. |
 | tmux in Ghostty | `table` | Ghostty has no sixel, and kitty graphics don't pass through tmux. |
 
 ## Not done yet
 
-- **sixel:** untested on a real sixel terminal. The tests decode its output
-  back into the image. In a pty that answers like a sixel terminal,
-  `render` draws with sixel, and a decoder written separately from
-  `icy_sixel` shows the image as drawn. `$env | render -e` there is
+- **Sixel.** Nobody has tried it on a real sixel terminal. The tests decode
+  its output back into the image. In a pty that answers like a sixel
+  terminal, `render` draws with sixel, and a decoder written separately from
+  `icy_sixel` shows the image as drawn. There, `$env | render -e` is
   1190 × 11816 pixels and encodes in about 200 ms, to 4 MB. Some terminals
-  cap a sixel image's size (xterm at 1000 × 1000 pixels by default), which
-  cuts a tall drawing; `--budget` keeps it under. A sixel terminal that
-  doesn't report its cell size falls back to `table`.
-- **Windows:** the probe goes through the console API (`CONIN$` in
-  terminal-input mode, read with a timeout), so Windows Terminal, which has
-  sixel, and WezTerm, which has kitty graphics, should draw. It is only
-  compile-checked so far; nobody has run it on Windows.
-- **tmux:** inside tmux 3.4 or later, `render` draws with sixel when the
-  terminal tmux runs in has sixel (tmux's `client_termfeatures` says so),
+  cap a sixel image's size, xterm at 1000 × 1000 pixels by default, which
+  cuts a tall drawing short. `--budget` keeps it under the cap. A sixel
+  terminal that doesn't report its cell size falls back to `table`.
+- **Windows.** The probe goes through the console API. It reads `CONIN$` in
+  terminal-input mode, with a timeout. So Windows Terminal, which has sixel,
+  and WezTerm, which has kitty graphics, should draw. It's only
+  compile-checked. Nobody has run it on Windows.
+- **tmux.** Inside tmux 3.4 or later, `render` draws with sixel when the
+  terminal tmux runs in has sixel, as tmux's `client_termfeatures` reports,
   and falls back to `table` otherwise. Kitty graphics don't pass through
-  tmux. Drawing inside tmux is untested on a sixel terminal.
-- **zellij:** untested.
-- **Speed:** `$env | render -e` at 143 columns (142 × 461 cells, about 34
-  million pixels) takes about 130 ms in the plugin, and Rex then takes
-  about 230 ms to show it. `table -e` takes about 20 ms. Of the plugin's
-  time, about 57 ms is drawing:
+  tmux. Nobody has tried tmux on a sixel terminal yet.
+- **zellij.** Untested.
+- **Speed.** `$env | render -e` at 143 columns is 142 × 461 cells, about 34
+  million pixels. It takes about 130 ms in the plugin, and Rex then takes
+  about 230 ms to show it. `table -e` takes about 20 ms. About 57 ms of the
+  plugin's time is drawing:
   - probe 12 ms
   - model 10 ms
   - layout 4 ms
   - paint and write files 31 ms
 
   The rest is Nushell sending the value and the config to the plugin.
-  - **Inline PNG:** for a terminal on another machine, it costs more on both
-    sides: 191 ms and 347 ms.
-  - **Shared memory (`t=s`):** Rex refuses it.
-- **Clipboard on Linux:** copied data lasts only while the process that
+  Inline PNG, for a terminal on another machine, costs more on both sides:
+  191 ms and 347 ms. Rex refuses shared memory, `t=s`.
+- **Clipboard on Linux.** Copied data lasts only while the process that
   copied it holds the clipboard. The plugin keeps running and keeps its
-  clipboard open, but when it stops, with nushell or `plugin stop render`,
-  the image goes too, unless a clipboard manager has taken it.
-- **Leftover files:** output captured and never displayed leaves its
-  temporary files until the next `render` call (or the system's own cleanup
-  if there is none).
-- **Type-ahead:** the first `render` in a session reads `/dev/tty` in raw
-  mode and throws away whatever isn't an answer, so keys typed during it
-  are lost. The plugin asks nushell to keep it running rather than stop it
-  when idle, so later calls reuse its answers and lose nothing. It holds
-  about 60 MiB after drawing `$env | render -e`. After changing the
+  clipboard open. When it stops, with nushell or `plugin stop render`, the
+  image goes too, unless a clipboard manager has taken it.
+- **Leftover files.** Output captured and never displayed leaves its
+  temporary files until the next `render` call. With no next call, they stay
+  until the system cleans its temporary folder.
+- **Type-ahead.** The first `render` in a session reads `/dev/tty` in raw
+  mode and throws away whatever isn't an answer, so it loses keys you type
+  during it. The plugin asks nushell to keep it running instead of stopping
+  it when idle, so later calls reuse its answers and lose nothing. It holds
+  about 60 MiB after drawing `$env | render -e`. After you change the
   terminal's font size, `plugin stop render` makes it probe again.
-- **Light theme:** checked in images drawn with it, but not yet on a
-  terminal with a light background. Rex doesn't answer OSC 11, so it always
-  gets the dark theme.
-- **Not wired up:** plugin config, such as a font family.
+- **Light theme.** Checked in images, but not yet on a terminal with a light
+  background. Rex doesn't answer OSC 11, so it always gets the dark theme.
+- **Plugin config.** Not wired up yet, so there's no way to pick a font
+  family.
 
 ## Releasing
 
 1. Set `version` in Cargo.toml and commit.
-2. Push a tag of that version with a `v` in front: `git tag v0.1.0`, then
-   `git push origin v0.1.0`.
-3. The Release workflow (`.github/workflows/release.yml`) checks the tag
-   against Cargo.toml, builds the six archives with
-   `.github/package.sh`, and attaches them to a draft release. Publish the
-   draft.
-4. `cargo publish`, last, so a version on crates.io always has its
-   binaries.
+2. Tag that version with a `v` in front and push the tag: `git tag v0.1.0`,
+   then `git push origin v0.1.0`.
+3. The Release workflow, `.github/workflows/release.yml`, builds the six
+   archives and the shell and PowerShell installers with
+   [dist](https://github.com/axodotdev/cargo-dist), and publishes them as
+   the GitHub release for the tag. dist stops if the tag doesn't match the
+   version in Cargo.toml.
+4. Run `cargo publish` last, so every version on crates.io has its binaries.
 
-binstall reads `[package.metadata.binstall]` from the crate on crates.io,
-and downloads the archive for the user's platform from the GitHub release.
+binstall reads `[package.metadata.binstall]` from the crate on crates.io and
+downloads the archive for the user's platform from the GitHub release.
+
+dist writes the workflow from `dist-workspace.toml`. To change the workflow,
+change that file and run `dist generate` with the dist version it pins.
 
 ## License
 
