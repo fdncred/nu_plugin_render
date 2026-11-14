@@ -716,16 +716,23 @@ impl Painter<'_, '_> {
             // Clear the line around each label, so it sits in a gap.
             let pad = (self.geometry.px * 0.25).round();
             for (column, cell) in block.columns.iter().zip(&block.header) {
-                let width = cell
+                // The label's own extent: a right-aligned one starts partway
+                // across its column, and the line runs up to it.
+                let start = cell
+                    .lines
+                    .iter()
+                    .map(|(dx, _)| *dx)
+                    .fold(f32::INFINITY, f32::min);
+                let end = cell
                     .lines
                     .iter()
                     .map(|(dx, line)| dx + line.width)
                     .fold(0.0, f32::max);
-                if width > 0.0 {
+                if end > start {
                     let gap = Rect {
-                        x: x + column.x - pad,
+                        x: x + column.x + start - pad,
                         y: top - weight,
-                        w: width + 2.0 * pad,
+                        w: end - start + 2.0 * pad,
                         h: 2.0 * weight,
                     };
                     // Over a card, the gap shows the card; otherwise the
