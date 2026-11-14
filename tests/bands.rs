@@ -31,6 +31,7 @@ fn nested(theme: &Theme) -> Cell {
             })
             .collect(),
         footer: false,
+        hidden: 0,
         align: vec![Align::Left, Align::Decimal],
     };
     Cell {
@@ -71,6 +72,7 @@ fn table(theme: &Theme) -> Grid {
         index: Some((0..40).map(|i| text(theme, &i.to_string())).collect()),
         rows,
         footer: false,
+        hidden: 0,
         align: vec![Align::Left, Align::Left, Align::Right],
     }
 }

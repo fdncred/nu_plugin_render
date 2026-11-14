@@ -47,6 +47,8 @@ pub struct Grid {
     pub align: Vec<Align>,
     /// The header again below the last row, per `footer_mode`.
     pub footer: bool,
+    /// Rows `--budget` cut off the end, noted under the last one.
+    pub hidden: usize,
 }
 
 impl Grid {
@@ -67,6 +69,19 @@ impl Grid {
         self.rows.len() + inner
     }
 
+    /// Keep the first `keep` rows, counting the rest as hidden, for
+    /// `--budget`.
+    pub fn cut(&mut self, keep: usize) {
+        if keep >= self.rows.len() {
+            return;
+        }
+        self.hidden += self.rows.len() - keep;
+        self.rows.truncate(keep);
+        if let Some(index) = &mut self.index {
+            index.truncate(keep);
+        }
+    }
+
     /// What `table` shows for an empty list or record, such as `empty list`,
     /// when `show_empty` is on.
     pub fn placeholder(text: String, theme: &Theme) -> Grid {
@@ -82,6 +97,7 @@ impl Grid {
             }]],
             align: vec![Align::Left],
             footer: false,
+            hidden: 0,
         }
     }
 }
@@ -170,6 +186,7 @@ impl Builder<'_> {
                     rows: vec![vec![self.cell(other, None, depth, false)]],
                     align: vec![kinds.align()],
                     footer: false,
+                    hidden: 0,
                 }
             }
         }
@@ -261,6 +278,7 @@ impl Builder<'_> {
             rows,
             align: kinds.into_iter().map(Kinds::align).collect(),
             footer: false,
+            hidden: 0,
         }
     }
 
@@ -281,6 +299,7 @@ impl Builder<'_> {
             rows,
             align: vec![Align::Left, Align::Left],
             footer: false,
+            hidden: 0,
         }
     }
 
@@ -515,6 +534,15 @@ mod tests {
         });
         let grid = build(&record, usize::MAX, Some(", "), Some(0));
         assert!(matches!(grid.rows[0][1].content, Content::Grid { .. }));
+    }
+
+    #[test]
+    fn cutting_counts_the_hidden_rows() {
+        let mut grid = build(&rows(), 0, None, Some(0));
+        grid.cut(1);
+        grid.cut(0);
+        assert_eq!((grid.rows.len(), grid.hidden), (0, 2));
+        assert_eq!(grid.index.map(|index| index.len()), Some(0));
     }
 
     #[test]

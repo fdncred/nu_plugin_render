@@ -17,10 +17,10 @@ use nu_protocol::{
 
 use crate::RenderPlugin;
 use crate::border::Border;
-use crate::draw::{self, Screen};
+use crate::draw::{self, Drawing, Screen};
 use crate::fonts::Rasterizer;
 use crate::kitty;
-use crate::layout::{Settings, Trim};
+use crate::layout::{Settings, Trim, thousands};
 use crate::model::{Builder, Grid, Styles};
 use crate::style::Theme;
 use crate::term;
@@ -106,6 +106,12 @@ impl PluginCommand for Render {
                 Some('t'),
             )
             .switch("list", "List the available themes.", Some('l'))
+            .named(
+                "budget",
+                SyntaxShape::Int,
+                "Draw at most this many million pixels: a table stops at a whole row and a string at a whole line, with a note of how many more there are.",
+                None,
+            )
             .category(Category::Viewers)
     }
 
@@ -138,6 +144,19 @@ impl PluginCommand for Render {
                         .with_label("not a positive number", span)
                 })?)
             }
+            None => None,
+        };
+        let budget = match call.get_flag::<Spanned<i64>>("budget")? {
+            Some(Spanned { item, span }) => Some(
+                u64::try_from(item)
+                    .ok()
+                    .filter(|millions| *millions > 0)
+                    .ok_or_else(|| {
+                        LabeledError::new("`--budget` must be a positive number of million pixels")
+                            .with_label("not a positive number", span)
+                    })?
+                    .saturating_mul(1_000_000),
+            ),
             None => None,
         };
         let index = index_flag(call)?;
@@ -189,13 +208,21 @@ impl PluginCommand for Render {
             // spaces, so it keeps to terminal cells in a monospace font.
             Value::String { val, .. } => {
                 let hooked = display_hook(engine, &value, metadata.as_ref());
-                draw::lay_out_text(
-                    hooked.as_deref().unwrap_or(val),
-                    &fonts,
-                    fonts.mono,
-                    &theme,
-                    &screen,
-                )
+                let text = hooked.as_deref().unwrap_or(val);
+                let lines: Vec<&str> = text.split('\n').collect();
+                within_budget(budget, lines.len(), |keep| {
+                    if keep == lines.len() {
+                        return draw::lay_out_text(text, &fonts, fonts.mono, &theme, &screen);
+                    }
+                    let hidden = lines.len() - keep;
+                    let cut = format!(
+                        "{}\n\x1b[2m… {} more {}\x1b[0m",
+                        lines[..keep].join("\n"),
+                        thousands(hidden),
+                        if hidden == 1 { "line" } else { "lines" }
+                    );
+                    draw::lay_out_text(&cut, &fonts, fonts.mono, &theme, &screen)
+                })
             }
             _ => {
                 let config = engine.get_config()?;
@@ -253,7 +280,11 @@ impl PluginCommand for Render {
                     padding: (config.table.padding.left, config.table.padding.right),
                     header_on_separator: config.table.header_on_separator,
                 };
-                draw::lay_out(&grid, &fonts, faces, &theme, &screen, settings)
+                let rows = grid.rows.len();
+                within_budget(budget, rows, |keep| {
+                    grid.cut(keep);
+                    draw::lay_out(&grid, &fonts, faces, &theme, &screen, settings.clone())
+                })
             }
         }
         .map_err(LabeledError::new)?;
@@ -403,6 +434,36 @@ fn display_hook(
             None
         }
     }
+}
+
+/// Lay out the first `keep` of `count` rows or lines, with `keep` falling
+/// until the drawing is within `budget` pixels, or nothing but the note is
+/// left.
+fn within_budget(
+    budget: Option<u64>,
+    count: usize,
+    mut lay_out: impl FnMut(usize) -> Result<Drawing, String>,
+) -> Result<Drawing, String> {
+    let mut keep = count;
+    let mut drawing = lay_out(keep)?;
+    let Some(budget) = budget else {
+        return Ok(drawing);
+    };
+    while keep > 0 {
+        let pixels = u64::from(drawing.columns)
+            * u64::from(drawing.cell.0)
+            * u64::from(drawing.rows)
+            * u64::from(drawing.cell.1);
+        if pixels <= budget {
+            break;
+        }
+        // Rows cost about the same, so keep the share that fits, and at
+        // least one fewer each time.
+        let share = budget as f64 / pixels as f64;
+        keep = ((keep as f64 * share) as usize).min(keep - 1);
+        drawing = lay_out(keep)?;
+    }
+    Ok(drawing)
 }
 
 /// `--index` as `table` reads it: true, or no flag, counts rows from 0; a

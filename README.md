@@ -34,6 +34,7 @@ Built against `nu-plugin` 0.117.0, which loads in Nushell 0.117.x.
 | `--copy` | Copy the drawing to the clipboard as an image, cut to the card, instead of drawing it. With `--png` too, it also returns the PNG. |
 | `--mono` | Draw a table in a monospace font instead of a sans-serif one. Strings always draw in monospace. |
 | `--width`, `-w` | The widest the drawing may be, in terminal columns. Defaults to the terminal's width, or 160 with `--png` or `--copy`. |
+| `--budget` | Draw at most this many million pixels. A table stops at a whole row and a string at a whole line, ending in a note such as `… 1,941 more rows`. Without it, everything is drawn. |
 
 These work as they do in `table`:
 

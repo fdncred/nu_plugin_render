@@ -116,6 +116,8 @@ pub struct Block {
     pub cells: Vec<Vec<Placed>>,
     /// The header again below the last row, `header_height` tall.
     pub footer: bool,
+    /// A line under the rows saying how many `--budget` cut, and its top.
+    pub note: Option<(f32, Placed)>,
     /// The theme's lines, or `None` for the card look.
     pub border: Option<Border>,
     pub line_color: Rgba,
@@ -396,6 +398,25 @@ impl Layout<'_, '_> {
             );
         }
 
+        let note = (grid.hidden > 0).then(|| {
+            let text = format!(
+                "… {} more {}",
+                thousands(grid.hidden),
+                if grid.hidden == 1 { "row" } else { "rows" }
+            );
+            let line = self.shaper.line(&text, self.faces.regular, false);
+            let top = y;
+            y += self.geometry.line_height + 2.0 * self.geometry.pad_y;
+            x = x.max(line.width + gutter);
+            (
+                top,
+                Placed {
+                    lines: vec![(0.0, line)],
+                    grid: None,
+                    color: self.theme.muted,
+                },
+            )
+        });
         let footer = grid.footer && header_height > 0.0;
         if footer {
             y += header_height;
@@ -409,6 +430,7 @@ impl Layout<'_, '_> {
             header,
             cells: placed_cells,
             footer,
+            note,
             border,
             line_color: self.settings.line_color,
             header_on_line,
@@ -719,6 +741,19 @@ impl Layout<'_, '_> {
     }
 }
 
+/// A count with thousands separators, such as `1,234`.
+pub fn thousands(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// Where text may break: words and the spaces between them, or with
 /// `keep_words` off, every character.
 fn tokens(text: &str, keep_words: bool) -> Vec<&str> {
@@ -762,6 +797,13 @@ fn with_background(mut lines: Vec<Line>, background: Option<Rgba>) -> Vec<Line> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thousands_get_separators() {
+        assert_eq!(thousands(7), "7");
+        assert_eq!(thousands(1234), "1,234");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+    }
 
     #[test]
     fn tokens_split_words_from_spaces() {

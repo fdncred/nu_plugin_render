@@ -402,6 +402,10 @@ impl Painter<'_, '_> {
                 self.cell(canvas, cell, x + column.x, y + row.y + self.geometry.pad_y);
             }
         }
+        if let Some((top, note)) = &block.note {
+            let left = block.columns.first().map_or(0.0, |column| column.x);
+            self.cell(canvas, note, x + left, y + top + self.geometry.pad_y);
+        }
     }
 
     /// The card look: a rounded card, zebra rows, and a header band.
@@ -588,10 +592,30 @@ impl Painter<'_, '_> {
         let v_top = top_line.unwrap_or(y);
         let v_bottom = bottom_line.unwrap_or(bottom);
         if border.columns {
+            // The note under the rows spans the columns, so their lines stop
+            // above it, and start again for a footer.
+            let spans = match &block.note {
+                Some((top, _)) => {
+                    let note_end = if block.footer {
+                        bottom - block.header_height
+                    } else {
+                        v_bottom
+                    };
+                    vec![(v_top, y + top), (note_end, v_bottom)]
+                }
+                None => vec![(v_top, v_bottom)],
+            };
             for pair in block.columns.windows(2) {
                 let at = x + pair[0].x + pair[0].width + self.geometry.pad_right;
-                pen.vline(canvas, at, v_top, v_bottom);
+                for &(from, to) in &spans {
+                    if to > from {
+                        pen.vline(canvas, at, from, to);
+                    }
+                }
             }
+        }
+        if let (true, Some((top, _))) = (border.rows || border.header, &block.note) {
+            pen.hline(canvas, y + top, &spans);
         }
         if !round {
             if border.left {
